@@ -269,17 +269,21 @@ CREATE TABLE api_keys (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Semantic Cache
+-- Semantic Cache (with drift protection)
 CREATE TABLE semantic_cache (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    query_embedding vector(1536),            -- pgvector embedding
-    query_hash VARCHAR(64) NOT NULL,          -- Fast exact-match check
+    query_embedding vector(384),             -- Local ONNX model (all-MiniLM-L6-v2, 384 dims)
+    query_hash VARCHAR(64) NOT NULL,          -- SHA-256 for fast exact-match
     query_text TEXT NOT NULL,
     response_text TEXT NOT NULL,
     model_used VARCHAR(100) NOT NULL,
     token_count INTEGER NOT NULL,
     hit_count INTEGER DEFAULT 0,
+    intent_category VARCHAR(100),             -- Drift guard: query intent classification
+    geo_context VARCHAR(100),                 -- Drift guard: geographic context (if detected)
+    entities TEXT[],                           -- Drift guard: extracted named entities
+    embedding_model_version VARCHAR(50) NOT NULL DEFAULT 'minilm-v2', -- For version migration
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at TIMESTAMPTZ NOT NULL
 );
@@ -287,6 +291,7 @@ CREATE TABLE semantic_cache (
 CREATE INDEX idx_cache_embedding ON semantic_cache 
     USING ivfflat (query_embedding vector_cosine_ops) WITH (lists = 100);
 CREATE INDEX idx_cache_tenant_hash ON semantic_cache (tenant_id, query_hash);
+CREATE INDEX idx_cache_tenant_intent ON semantic_cache (tenant_id, intent_category, geo_context);
 
 -- Usage Logs (append-only, partitioned by month)
 CREATE TABLE usage_logs (
@@ -341,6 +346,44 @@ Token-bucket algorithm with Redis, per-tenant:
 
 Rate limiting is **token-aware**: a request using 4K tokens costs more capacity than one using 100 tokens.
 
+### Token-Aware Rate Limiting: The Reservation System
+
+**The Problem:** You can't know `output_tokens` until the response finishes streaming.
+But you need to enforce token limits BEFORE the request starts. Classic chicken-and-egg.
+
+**The Fix — Reserve → Execute → Refund:**
+
+```
+1. REQUEST ARRIVES
+   │
+   ├─ Estimate max possible tokens:
+   │   reserved_tokens = input_tokens + min(requested_max_tokens, model_max_output)
+   │
+   ├─ Check tenant's token bucket:
+   │   IF bucket.available >= reserved_tokens → RESERVE (deduct from bucket)
+   │   ELSE → 429 Too Many Requests (with Retry-After header)
+   │
+2. EXECUTE REQUEST (stream/complete)
+   │
+3. RESPONSE FINISHED
+   │
+   ├─ actual_tokens = input_tokens + output_tokens
+   ├─ unused = reserved_tokens - actual_tokens
+   │
+   └─ REFUND unused tokens back to Redis bucket
+       HINCRBY tenant:{id}:tokens:bucket {unused}
+```
+
+**Why this works:**
+- Tenant never exceeds their limit (reservation guarantees it)
+- Tenant isn't penalized unfairly (refund returns unused capacity)
+- All operations are atomic Redis commands (no race conditions)
+- Works with streaming (refund happens when stream closes)
+
+**Edge case:** If the server crashes mid-request, reserved tokens are "lost" until the
+bucket refills on its natural schedule. This is acceptable — it's a brief capacity
+reduction, not data loss. A background job can reclaim orphaned reservations after 5min.
+
 ## Smart Routing Algorithm
 
 ```
@@ -364,17 +407,45 @@ Rate limiting is **token-aware**: a request using 4K tokens costs more capacity 
 
 ```
 1. Receive query
-2. Generate embedding (text-embedding-3-small, cached locally)
-3. Fast path: exact hash match? → return cached response
-4. Slow path: pgvector cosine similarity search
+2. Fast path: exact SHA-256 hash match? → return cached response (zero latency cost)
+3. Generate embedding via LOCAL ONNX model (not API call — see Cold Start fix below)
+   - ~5-10ms local inference vs 50-200ms API round-trip
+4. pgvector cosine similarity search with COMPOUND FILTERING:
    - WHERE tenant_id = $1
+   - AND intent_category = $2        ← prevents cross-intent drift
+   - AND geo_context = $3            ← prevents cross-geography drift (when present)
    - AND expires_at > NOW()
-   - ORDER BY query_embedding <=> $2
+   - ORDER BY query_embedding <=> $4
    - LIMIT 1
-5. If similarity > 0.95 → cache HIT (return cached, log saving)
-6. If similarity < 0.95 → cache MISS (continue to router)
-7. After completion: store response + embedding in cache
+5. If similarity > 0.97 → cache HIT (return cached, log saving)
+   - Threshold raised from 0.95 → 0.97 to prevent semantic drift
+   - Additional: entity extraction check (named entities in query must match cached query)
+6. If similarity < 0.97 → cache MISS (continue to router)
+7. After completion: store response + embedding + intent_category + geo_context in cache
 ```
+
+### Cache Safety: Preventing Semantic Drift
+
+**The Problem:** "How do I pay my tax in Accra?" and "How do I pay my tax in Lagos?" 
+produce embeddings with >0.95 similarity — but the answers are completely different.
+
+**The Fix — Multi-Layer Cache Matching:**
+
+```
+Layer 1: Exact Hash    → Instant match (identical queries)
+Layer 2: Entity Guard  → Extract named entities (locations, currencies, names, dates)
+                         If entities DON'T match → force cache MISS, even if embeddings match
+Layer 3: Intent Tag    → Classify query intent (tax_payment, inventory, pricing, etc.)
+                         Cache is partitioned by intent — tax queries never match inventory queries
+Layer 4: Geo Context   → If query contains geographic signals, partition cache by region
+                         "Accra tax" and "Lagos tax" live in separate cache partitions
+Layer 5: Embedding     → Cosine similarity at 0.97 threshold (stricter than industry standard 0.95)
+```
+
+ALL layers must pass for a cache hit. This means:
+- Semantically similar but factually different queries → MISS (correct)
+- Truly identical intent with same entities and geography → HIT (correct)
+- Cost of false misses (extra API calls) is far less than cost of false hits (wrong answers)
 
 ## Circuit Breaker States
 
@@ -404,3 +475,81 @@ When multiple tenants send semantically identical requests within a 2-second win
 5. One API call serves N tenants
 
 This is especially powerful for common queries across businesses.
+
+## Stress Test Mitigations
+
+### 1. Cold Start: Embedding Latency
+
+**The Problem:** Generating an embedding via API (OpenAI text-embedding-3-small) adds 
+50-200ms latency. On a cache MISS, the request is now slower than calling OpenAI directly.
+That kills the "Stripe-fast" feel.
+
+**The Fix — Local ONNX Embedding Model:**
+
+```
+┌─────────────────────────────────────────────────┐
+│            Embedding Strategy                    │
+│                                                  │
+│  PRIMARY: Local ONNX model (all-MiniLM-L6-v2)  │
+│  ├─ Runs in-process via onnxruntime-node        │
+│  ├─ ~5-10ms per embedding (vs 50-200ms API)     │
+│  ├─ 384 dimensions (smaller, faster index)      │
+│  ├─ Zero network dependency                     │
+│  └─ Loaded once at startup, stays in memory     │
+│                                                  │
+│  FALLBACK: OpenAI text-embedding-3-small        │
+│  ├─ Higher quality (1536 dimensions)            │
+│  ├─ Used for re-indexing / batch operations     │
+│  └─ Never on the hot path                       │
+│                                                  │
+│  The hot path (every request) uses LOCAL only.  │
+│  API embeddings are for background tasks.        │
+└─────────────────────────────────────────────────┘
+```
+
+**Latency budget for a cache HIT:**
+- Receive request: ~1ms
+- Auth + rate limit (Redis): ~2ms
+- Exact hash check (Redis): ~1ms
+- Local embedding generation: ~5-10ms
+- pgvector similarity search: ~5-15ms
+- **Total: ~15-30ms** (faster than any direct AI API call)
+
+**Latency budget for a cache MISS:**
+- All of the above: ~15-30ms
+- Smart routing decision: ~1ms
+- Provider API call: 500-5000ms (the actual AI inference)
+- **Total: ~520-5030ms** (overhead is <30ms — negligible vs provider latency)
+
+The embedding cost is invisible compared to the AI call itself. And on cache HITs,
+the response is 10-100x faster than going to any provider.
+
+### 2. Semantic Cache Drift (Solved Above)
+
+See "Cache Safety: Preventing Semantic Drift" section.
+Multi-layer matching (entity guard + intent tag + geo context + strict 0.97 threshold)
+ensures "tax in Accra" never serves "tax in Lagos."
+
+### 3. Token-Aware Rate Limiting (Solved Above)
+
+See "Token-Aware Rate Limiting: The Reservation System" section.
+Reserve → Execute → Refund pattern handles the unknown-output-tokens problem
+with atomic Redis operations and automatic orphan reclamation.
+
+### 4. Additional Stress Points Addressed
+
+**Thundering Herd on Provider Recovery:**
+When a circuit breaker transitions from OPEN → HALF_OPEN, ALL queued requests
+could slam the provider simultaneously. Fix: HALF_OPEN allows only 1 test request.
+On success, drain queued requests with rate limiting (BullMQ limiter: 50/min).
+
+**Multi-Region Cache Consistency:**
+When deployed across regions, cache entries are local to each region.
+No cross-region cache sharing — avoids latency and consistency headaches.
+Each region builds its own cache organically from its traffic patterns.
+
+**Embedding Model Version Drift:**
+If you upgrade the local ONNX model, all existing cache embeddings become
+incompatible (different vector space). Fix: cache entries include `embedding_model_version`.
+On model upgrade, old entries gracefully expire via TTL while new entries use the new model.
+No manual migration needed.
