@@ -87,3 +87,9 @@ export async function startServer(): Promise<void> {
   await server.listen({ port: config.PORT, host: '0.0.0.0' });
   server.log.info(`AfrAI Gateway listening on port ${config.PORT}`);
 }
+
+// Auto-start when run directly
+startServer().catch((err) => {
+  console.error('Failed to start:', err);
+  process.exit(1);
+});

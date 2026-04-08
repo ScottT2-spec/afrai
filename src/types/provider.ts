@@ -8,6 +8,8 @@ export const ProviderIdSchema = z.enum([
   'anthropic',
   'google',
   'cohere',
+  'groq',
+  'sambanova',
 ]);
 export type ProviderId = z.infer<typeof ProviderIdSchema>;
 
