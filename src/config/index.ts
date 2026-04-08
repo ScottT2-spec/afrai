@@ -21,3 +21,8 @@ function loadConfig(): EnvConfig {
 }
 
 export const config: EnvConfig = loadConfig();
+
+/** Alias used by server.ts and other modules */
+export function getConfig(): EnvConfig {
+  return config;
+}

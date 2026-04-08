@@ -1,9 +1,13 @@
 import Fastify from 'fastify';
-import { getConfig } from './config/index.js';
+import { getConfig, config } from './config/index.js';
 import tenantContextPlugin from './gateway/plugins/tenantContext.js';
 import { requestIdMiddleware } from './gateway/middleware/requestId.js';
 import { healthRoutes } from './gateway/routes/health.js';
+import { completionsRoute } from './gateway/routes/completions.js';
 import { getPool, closePool } from './db/client.js';
+import { createProviderRegistry } from './providers/registry.js';
+import { ApiKeyService } from './services/apiKeyService.js';
+import { getDb } from './db/client.js';
 
 /**
  * Bootstrap the AfrAI Fastify server.
@@ -22,6 +26,19 @@ export async function buildServer() {
 
   // --- Global hooks ---
   server.addHook('onRequest', requestIdMiddleware);
+
+  // --- Services ---
+  const providerRegistry = createProviderRegistry();
+  const db = getDb();
+
+  // Lightweight in-memory cache stub (swap for Redis when available)
+  const cacheStub = {
+    async get(_key: string) { return null; },
+    async set(_key: string, _value: string, _mode: string, _ttl: number) {},
+    async del(_key: string) {},
+  };
+
+  const apiKeyService = new ApiKeyService(db, cacheStub, config.API_KEY_SALT);
 
   // --- Routes ---
   await server.register(async (instance) => {
@@ -42,6 +59,9 @@ export async function buildServer() {
       },
     });
   });
+
+  // Completions — the core route: auth → router → provider → response
+  await server.register(completionsRoute, { apiKeyService, providerRegistry });
 
   // --- Graceful shutdown ---
   const shutdown = async (signal: string) => {
