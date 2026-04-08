@@ -37,7 +37,7 @@ describe('smartRouter — routeRequest', () => {
     );
 
     // For a trivial request, should pick one of the cheap models
-    const cheapModels = ['gpt-4o-mini', 'claude-3-haiku', 'gemini-1.5-flash', 'command-r'];
+    const cheapModels = ['gpt-4o-mini', 'claude-3-haiku', 'gemini-1.5-flash', 'command-r', 'llama-3.1-8b-instant', 'Meta-Llama-3.1-8B-Instruct'];
     expect(cheapModels).toContain(decision.selectedModel.id);
   });
 
@@ -137,6 +137,8 @@ describe('smartRouter — routeRequest', () => {
               anthropic: 'open',
               google: 'open',
               cohere: 'open',
+              groq: 'open',
+              sambanova: 'open',
             },
           },
         })

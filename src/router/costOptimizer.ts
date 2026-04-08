@@ -85,11 +85,28 @@ export function rankModels(
       // Lower score = better (cheaper and/or faster)
       let score = estimatedCost * (1 + latencyWeight * normalizedLatency);
 
-      // Penalty for models whose complexity threshold exceeds request complexity.
-      // This means the model is "overqualified" — designed for harder tasks.
-      // We add a penalty rather than excluding, so they stay as fallbacks.
+      // ── Complexity-aware scoring ──────────────────────────────
+      //
+      // The goal: cheap models win for simple stuff, big models win
+      // for complex stuff, and there's a smooth crossover in between.
+
       if (model.complexityThreshold > complexityScore) {
-        score *= 10; // Heavy penalty — prefer appropriately-sized models
+        // Model is overqualified — penalty so it stays as fallback
+        score *= 3;
+      } else if (complexityScore >= 0.3) {
+        // Request is non-trivial. Boost models that are DESIGNED
+        // for this complexity range (their threshold is close to
+        // the request's score). This makes 70B models competitive
+        // with 8B models on medium+ requests.
+        //
+        // A model with threshold 0.3 handling a 0.5 request gets a
+        // moderate boost. A model with threshold 0.0 gets no boost
+        // (it CAN handle it, but isn't specialized for it).
+        const fit = model.complexityThreshold / Math.max(complexityScore, 0.01);
+        // fit ranges from 0 (generic cheap model) to ~1 (perfect match)
+        // Discount up to 70% for well-matched models
+        const discount = 1 - (fit * 0.7);
+        score *= discount;
       }
 
       return { model, score, estimatedCost };
