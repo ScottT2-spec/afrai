@@ -26,4 +26,10 @@ export interface TenantContext {
   readonly id: string;
   /** Current subscription tier */
   readonly tier: TenantTier;
+  /** API key ID used for this request */
+  readonly apiKeyId: string;
+  /** Allowed scopes for this key */
+  readonly scopes: readonly string[];
+  /** Rate limit (requests per minute) for this key */
+  readonly rateLimitRpm: number;
 }
