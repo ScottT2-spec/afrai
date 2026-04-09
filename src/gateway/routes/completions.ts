@@ -9,6 +9,7 @@ import type { ProviderRegistry } from '../../providers/registry.js';
 import type { CircuitBreakerManager } from '../../resilience/circuitBreaker.js';
 import type { RateLimiter } from '../middleware/rateLimiter.js';
 import type { UsageTracker } from '../../billing/tracker.js';
+import type { IdempotencyService } from '../middleware/idempotency.js';
 import type { CompletionResponse } from '../../providers/base.js';
 import type { ModelDefinition } from '../../types/provider.js';
 
@@ -39,6 +40,7 @@ export interface CompletionsRouteOptions {
   circuitBreaker: CircuitBreakerManager;
   rateLimiter: RateLimiter;
   usageTracker: UsageTracker;
+  idempotencyService: IdempotencyService;
 }
 
 // ── Route ───────────────────────────────────────────────────────
@@ -53,7 +55,7 @@ export async function completionsRoute(
   app: FastifyInstance,
   opts: CompletionsRouteOptions
 ): Promise<void> {
-  const { apiKeyService, providerRegistry, circuitBreaker, rateLimiter, usageTracker } = opts;
+  const { apiKeyService, providerRegistry, circuitBreaker, rateLimiter, usageTracker, idempotencyService } = opts;
   const authHook = createAuthMiddleware(apiKeyService, 'completions');
 
   app.post(
@@ -103,7 +105,19 @@ export async function completionsRoute(
       void reply.header('X-RateLimit-Limit', tenant.rateLimitRpm.toString());
       void reply.header('X-RateLimit-Remaining', rateResult.remaining.toString());
 
-      // ── 3. Route the request ────────────────────────────────────
+      // ── 3. Idempotency check ────────────────────────────────────
+      const idempotencyKey = request.headers['x-idempotency-key'];
+      const hasIdempotencyKey = typeof idempotencyKey === 'string' && idempotencyKey.length > 0;
+
+      if (hasIdempotencyKey) {
+        const cached = await idempotencyService.check(tenant.id, idempotencyKey);
+        if (cached.hit) {
+          void reply.header('X-Idempotent-Replay', 'true');
+          return reply.code(cached.entry.statusCode).send(JSON.parse(cached.entry.body));
+        }
+      }
+
+      // ── 4. Route the request ────────────────────────────────────
       let decision;
       try {
         decision = await routeRequest({
@@ -227,7 +241,7 @@ export async function completionsRoute(
         status: usedFallback ? 'fallback' : 'success',
       });
 
-      return reply.code(200).send({
+      const responseBody = {
         id: requestId,
         object: 'chat.completion',
         model: result.model,
@@ -251,7 +265,14 @@ export async function completionsRoute(
           fallbacks_available: decision.fallbackChain.length,
         },
         latency_ms: totalLatencyMs,
-      });
+      };
+
+      // Store for idempotency replay
+      if (hasIdempotencyKey) {
+        idempotencyService.store(tenant.id, idempotencyKey!, 200, responseBody);
+      }
+
+      return reply.code(200).send(responseBody);
     }
   );
 }
