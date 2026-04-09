@@ -1,13 +1,16 @@
 import Fastify from 'fastify';
-import { getConfig, config } from './config/index.js';
+import { getConfig } from './config/index.js';
 import tenantContextPlugin from './gateway/plugins/tenantContext.js';
 import { requestIdMiddleware } from './gateway/middleware/requestId.js';
 import { healthRoutes } from './gateway/routes/health.js';
 import { completionsRoute } from './gateway/routes/completions.js';
-import { getPool, closePool } from './db/client.js';
+import { getPool, closePool, getDb } from './db/client.js';
 import { createProviderRegistry } from './providers/registry.js';
 import { ApiKeyService } from './services/apiKeyService.js';
-import { getDb } from './db/client.js';
+import { getRedis, checkRedisHealth, closeRedis, createRedisCacheClient } from './cache/redisClient.js';
+import { CircuitBreakerManager } from './resilience/circuitBreaker.js';
+import { RateLimiter } from './gateway/middleware/rateLimiter.js';
+import { UsageTracker } from './billing/tracker.js';
 
 /**
  * Bootstrap the AfrAI Fastify server.
@@ -30,15 +33,20 @@ export async function buildServer() {
   // --- Services ---
   const providerRegistry = createProviderRegistry();
   const db = getDb();
+  const redis = getRedis();
 
-  // Lightweight in-memory cache stub (swap for Redis when available)
-  const cacheStub = {
-    async get(_key: string) { return null; },
-    async set(_key: string, _value: string, _mode: string, _ttl: number) {},
-    async del(_key: string) {},
-  };
+  // Redis-backed cache for API key lookups
+  const cacheClient = createRedisCacheClient(redis);
+  const apiKeyService = new ApiKeyService(db, cacheClient, config.API_KEY_SALT);
 
-  const apiKeyService = new ApiKeyService(db, cacheStub, config.API_KEY_SALT);
+  // Circuit breaker — tracks provider health
+  const circuitBreaker = new CircuitBreakerManager();
+
+  // Rate limiter — Redis-backed sliding window
+  const rateLimiter = new RateLimiter(redis);
+
+  // Usage tracker — logs every request for billing
+  const usageTracker = new UsageTracker(db);
 
   // --- Routes ---
   await server.register(async (instance) => {
@@ -52,21 +60,24 @@ export async function buildServer() {
           return false;
         }
       },
-      checkRedis: async () => {
-        // Redis check — will be wired when Redis client is set up
-        // For now, return true in development
-        return true;
-      },
+      checkRedis: () => checkRedisHealth(),
     });
   });
 
-  // Completions — the core route: auth → router → provider → response
-  await server.register(completionsRoute, { apiKeyService, providerRegistry });
+  // Completions — the core route: auth → rate limit → router → provider → response
+  await server.register(completionsRoute, {
+    apiKeyService,
+    providerRegistry,
+    circuitBreaker,
+    rateLimiter,
+    usageTracker,
+  });
 
   // --- Graceful shutdown ---
   const shutdown = async (signal: string) => {
     server.log.info({ signal }, 'Shutting down...');
     await server.close();
+    await closeRedis();
     await closePool();
     process.exit(0);
   };

@@ -2,6 +2,8 @@ import type { BaseProvider } from './base.js';
 import { GroqProvider } from './groq.js';
 import { SambaNovaProvider } from './sambanova.js';
 import { AnthropicProvider } from './anthropic.js';
+import { OpenAIProvider } from './openai.js';
+import { GoogleProvider } from './google.js';
 
 /**
  * Provider registry — manages all configured AI provider adapters.
@@ -58,6 +60,14 @@ export function createProviderRegistry(env: Record<string, string | undefined> =
 
   if (env.ANTHROPIC_API_KEY) {
     registry.register(new AnthropicProvider(env.ANTHROPIC_API_KEY));
+  }
+
+  if (env.OPENAI_API_KEY) {
+    registry.register(new OpenAIProvider(env.OPENAI_API_KEY));
+  }
+
+  if (env.GOOGLE_API_KEY) {
+    registry.register(new GoogleProvider(env.GOOGLE_API_KEY));
   }
 
   return registry;
