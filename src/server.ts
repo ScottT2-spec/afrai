@@ -11,6 +11,7 @@ import { getRedis, checkRedisHealth, closeRedis, createRedisCacheClient } from '
 import { CircuitBreakerManager } from './resilience/circuitBreaker.js';
 import { RateLimiter } from './gateway/middleware/rateLimiter.js';
 import { UsageTracker } from './billing/tracker.js';
+import { IdempotencyService } from './gateway/middleware/idempotency.js';
 
 /**
  * Bootstrap the AfrAI Fastify server.
@@ -48,6 +49,9 @@ export async function buildServer() {
   // Usage tracker — logs every request for billing
   const usageTracker = new UsageTracker(db);
 
+  // Idempotency — prevents duplicate processing (24h TTL)
+  const idempotencyService = new IdempotencyService(redis);
+
   // --- Routes ---
   await server.register(async (instance) => {
     await healthRoutes(instance, {
@@ -71,6 +75,7 @@ export async function buildServer() {
     circuitBreaker,
     rateLimiter,
     usageTracker,
+    idempotencyService,
   });
 
   // --- Graceful shutdown ---
