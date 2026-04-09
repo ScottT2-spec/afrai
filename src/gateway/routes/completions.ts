@@ -6,6 +6,9 @@ import { estimateRequestCost } from '../../router/costOptimizer.js';
 import { createAuthMiddleware } from '../middleware/auth.js';
 import type { ApiKeyService } from '../../services/apiKeyService.js';
 import type { ProviderRegistry } from '../../providers/registry.js';
+import type { CircuitBreakerManager } from '../../resilience/circuitBreaker.js';
+import type { RateLimiter } from '../middleware/rateLimiter.js';
+import type { UsageTracker } from '../../billing/tracker.js';
 import type { CompletionResponse } from '../../providers/base.js';
 import type { ModelDefinition } from '../../types/provider.js';
 
@@ -33,6 +36,9 @@ type CompletionBody = z.infer<typeof CompletionBodySchema>;
 export interface CompletionsRouteOptions {
   apiKeyService: ApiKeyService;
   providerRegistry: ProviderRegistry;
+  circuitBreaker: CircuitBreakerManager;
+  rateLimiter: RateLimiter;
+  usageTracker: UsageTracker;
 }
 
 // ── Route ───────────────────────────────────────────────────────
@@ -40,21 +46,14 @@ export interface CompletionsRouteOptions {
 /**
  * POST /v1/completion
  *
- * The core route that ties auth → router → provider → response.
- *
- * Flow:
- * 1. Auth middleware resolves tenant from API key
- * 2. Validate + parse request body (Zod)
- * 3. Smart router selects the best model + fallback chain
- * 4. Call provider adapter for the selected model
- * 5. Walk the fallback chain on failure
- * 6. Return unified response
+ * The core route: auth → rate limit → router → provider → response.
+ * Supports both regular and streaming (SSE) responses.
  */
 export async function completionsRoute(
   app: FastifyInstance,
   opts: CompletionsRouteOptions
 ): Promise<void> {
-  const { apiKeyService, providerRegistry } = opts;
+  const { apiKeyService, providerRegistry, circuitBreaker, rateLimiter, usageTracker } = opts;
   const authHook = createAuthMiddleware(apiKeyService, 'completions');
 
   app.post(
@@ -85,17 +84,26 @@ export async function completionsRoute(
         });
       }
 
-      // Streaming not wired yet — reject early with a clear message
-      if (body.stream) {
-        return reply.code(501).send({
+      // ── 2. Rate limit check ─────────────────────────────────────
+      const rateResult = await rateLimiter.checkRateLimit(tenant.id, tenant.rateLimitRpm);
+      if (!rateResult.allowed) {
+        void reply.header('Retry-After', Math.ceil((rateResult.retryAfterMs ?? 1000) / 1000).toString());
+        void reply.header('X-RateLimit-Limit', tenant.rateLimitRpm.toString());
+        void reply.header('X-RateLimit-Remaining', '0');
+        return reply.code(429).send({
           error: {
-            type: 'not_implemented',
-            message: 'Streaming is not yet available. Set stream: false or omit it.',
+            type: 'rate_limit_error',
+            message: 'Rate limit exceeded. Please retry later.',
+            retry_after_ms: rateResult.retryAfterMs,
           },
         });
       }
 
-      // ── 2. Route the request ────────────────────────────────────
+      // Set rate limit headers
+      void reply.header('X-RateLimit-Limit', tenant.rateLimitRpm.toString());
+      void reply.header('X-RateLimit-Remaining', rateResult.remaining.toString());
+
+      // ── 3. Route the request ────────────────────────────────────
       let decision;
       try {
         decision = await routeRequest({
@@ -105,6 +113,7 @@ export async function completionsRoute(
           options: {
             forceModel: body.model,
             latencyWeight: 0,
+            circuitBreakerStatus: circuitBreaker.getAllStatuses(),
           },
         });
       } catch (err) {
@@ -116,7 +125,15 @@ export async function completionsRoute(
         throw err;
       }
 
-      // ── 3. Call provider (with fallback chain) ──────────────────
+      // ── 4. Streaming path ───────────────────────────────────────
+      if (body.stream) {
+        return handleStreamingResponse(
+          request, reply, body, decision, requestId, requestStart,
+          tenant, providerRegistry, circuitBreaker, usageTracker,
+        );
+      }
+
+      // ── 5. Non-streaming: call provider (with fallback chain) ──
       const modelsToTry: ModelDefinition[] = [
         decision.selectedModel,
         ...decision.fallbackChain,
@@ -125,8 +142,14 @@ export async function completionsRoute(
       let result: CompletionResponse | undefined;
       let lastError: Error | undefined;
       let usedModel: ModelDefinition | undefined;
+      let usedFallback = false;
 
       for (const model of modelsToTry) {
+        // Check circuit breaker before calling
+        if (!circuitBreaker.canRequest(model.provider)) {
+          continue;
+        }
+
         const adapter = providerRegistry.get(model.provider);
         if (!adapter) {
           lastError = new Error(
@@ -143,10 +166,13 @@ export async function completionsRoute(
             maxTokens: body.max_tokens,
             temperature: body.temperature,
           });
+          circuitBreaker.recordSuccess(model.provider);
           usedModel = model;
-          break; // success — stop trying fallbacks
+          if (model !== decision.selectedModel) usedFallback = true;
+          break;
         } catch (err) {
           lastError = err instanceof Error ? err : new Error(String(err));
+          circuitBreaker.recordFailure(model.provider);
           request.log.warn(
             { model: model.id, provider: model.provider, error: lastError.message },
             'Provider call failed, trying fallback'
@@ -154,8 +180,21 @@ export async function completionsRoute(
         }
       }
 
-      // ── 4. All providers failed ─────────────────────────────────
+      // ── 6. All providers failed ─────────────────────────────────
       if (!result) {
+        usageTracker.track({
+          tenantId: tenant.id,
+          requestId,
+          model: decision.selectedModel.id,
+          provider: decision.selectedModel.provider,
+          inputTokens: 0,
+          outputTokens: 0,
+          costUsd: 0,
+          latencyMs: Math.round(performance.now() - requestStart),
+          complexityScore: decision.complexityScore,
+          status: 'error',
+        });
+
         return reply.code(502).send({
           error: {
             type: 'provider_error',
@@ -165,7 +204,7 @@ export async function completionsRoute(
         });
       }
 
-      // ── 5. Build response ───────────────────────────────────────
+      // ── 7. Build response ───────────────────────────────────────
       const totalLatencyMs = Math.round(performance.now() - requestStart);
       const costModel = usedModel ?? decision.selectedModel;
       const costUsd = estimateRequestCost(
@@ -173,6 +212,20 @@ export async function completionsRoute(
         result.usage.inputTokens,
         result.usage.outputTokens
       );
+
+      // Fire-and-forget usage logging
+      usageTracker.track({
+        tenantId: tenant.id,
+        requestId,
+        model: result.model,
+        provider: result.provider,
+        inputTokens: result.usage.inputTokens,
+        outputTokens: result.usage.outputTokens,
+        costUsd,
+        latencyMs: totalLatencyMs,
+        complexityScore: decision.complexityScore,
+        status: usedFallback ? 'fallback' : 'success',
+      });
 
       return reply.code(200).send({
         id: requestId,
@@ -198,8 +251,150 @@ export async function completionsRoute(
           fallbacks_available: decision.fallbackChain.length,
         },
         latency_ms: totalLatencyMs,
-        cache_hit: false, // Cache layer not wired yet
       });
     }
   );
+}
+
+// ── Streaming handler ─────────────────────────────────────────────
+
+async function handleStreamingResponse(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  body: CompletionBody,
+  decision: Awaited<ReturnType<typeof routeRequest>>,
+  requestId: string,
+  requestStart: number,
+  tenant: NonNullable<FastifyRequest['tenantContext']>,
+  providerRegistry: ProviderRegistry,
+  circuitBreaker: CircuitBreakerManager,
+  usageTracker: UsageTracker,
+): Promise<void> {
+  const modelsToTry: ModelDefinition[] = [
+    decision.selectedModel,
+    ...decision.fallbackChain,
+  ];
+
+  let usedModel: ModelDefinition | undefined;
+  let usedFallback = false;
+  let lastError: Error | undefined;
+
+  // Set SSE headers
+  void reply.raw.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Request-Id': requestId,
+  });
+
+  for (const model of modelsToTry) {
+    if (!circuitBreaker.canRequest(model.provider)) continue;
+
+    const adapter = providerRegistry.get(model.provider);
+    if (!adapter) continue;
+
+    try {
+      const stream = adapter.stream({
+        model: model.id,
+        messages: body.messages.map((m) => ({ role: m.role, content: m.content })),
+        maxTokens: body.max_tokens,
+        temperature: body.temperature,
+      });
+
+      let inputTokens = 0;
+      let outputTokens = 0;
+
+      for await (const chunk of stream) {
+        // Check if client disconnected
+        if (request.raw.destroyed) {
+          break;
+        }
+
+        if (chunk.done) {
+          inputTokens = chunk.usage?.inputTokens ?? 0;
+          outputTokens = chunk.usage?.outputTokens ?? 0;
+
+          const totalLatencyMs = Math.round(performance.now() - requestStart);
+          const costUsd = estimateRequestCost(model, inputTokens, outputTokens);
+
+          // Send final event with usage info
+          reply.raw.write(`data: ${JSON.stringify({
+            done: true,
+            usage: {
+              input_tokens: inputTokens,
+              output_tokens: outputTokens,
+              total_tokens: inputTokens + outputTokens,
+              cost_usd: Math.round(costUsd * 1_000_000) / 1_000_000,
+            },
+            model: model.id,
+            provider: model.provider,
+            latency_ms: totalLatencyMs,
+          })}\n\n`);
+          reply.raw.write('data: [DONE]\n\n');
+
+          // Log usage
+          usageTracker.track({
+            tenantId: tenant.id,
+            requestId,
+            model: model.id,
+            provider: model.provider,
+            inputTokens,
+            outputTokens,
+            costUsd,
+            latencyMs: totalLatencyMs,
+            complexityScore: decision.complexityScore,
+            status: usedFallback ? 'fallback' : 'success',
+          });
+        } else {
+          // Send text chunk
+          reply.raw.write(`data: ${JSON.stringify({
+            id: requestId,
+            choices: [{
+              index: 0,
+              delta: { content: chunk.text },
+            }],
+          })}\n\n`);
+        }
+      }
+
+      circuitBreaker.recordSuccess(model.provider);
+      usedModel = model;
+      reply.raw.end();
+      return;
+
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      circuitBreaker.recordFailure(model.provider);
+      if (model !== decision.selectedModel) usedFallback = true;
+      request.log.warn(
+        { model: model.id, provider: model.provider, error: lastError.message },
+        'Streaming provider failed, trying fallback'
+      );
+    }
+  }
+
+  // All providers failed during streaming
+  usageTracker.track({
+    tenantId: tenant.id,
+    requestId,
+    model: decision.selectedModel.id,
+    provider: decision.selectedModel.provider,
+    inputTokens: 0,
+    outputTokens: 0,
+    costUsd: 0,
+    latencyMs: Math.round(performance.now() - requestStart),
+    complexityScore: decision.complexityScore,
+    status: 'error',
+  });
+
+  // If we haven't written anything yet, send error as SSE event
+  reply.raw.write(`data: ${JSON.stringify({
+    error: {
+      type: 'provider_error',
+      message: 'All providers failed.',
+      detail: lastError?.message,
+    },
+  })}\n\n`);
+  reply.raw.write('data: [DONE]\n\n');
+  reply.raw.end();
 }

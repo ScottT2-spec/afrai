@@ -22,18 +22,6 @@
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                     SEMANTIC CACHE LAYER                        │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  Embedding Generator → pgvector Similarity Search        │   │
-│  │  Cache Hit? → Return instantly (cost = $0)               │   │
-│  │  Cache Miss? → Continue to Router                        │   │
-│  │  Namespace isolation per tenant                          │   │
-│  │  TTL + LRU eviction                                      │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │ (cache miss)
-                           ▼
-┌─────────────────────────────────────────────────────────────────┐
 │                    SMART ROUTER ENGINE                          │
 │  ┌──────────────┐ ┌──────────────┐ ┌────────────────────────┐  │
 │  │  Complexity   │ │   Cost       │ │   Provider Health      │  │
@@ -47,16 +35,6 @@
 │         └────────────────┴─────────────────────┘               │
 │                          │                                      │
 │                    Model Selected                                │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                  REQUEST COALESCER                               │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  If 10 tenants ask the same thing within 2s window:      │   │
-│  │  → Make ONE API call, serve all 10                       │   │
-│  │  → Massive cost savings at scale                         │   │
-│  └──────────────────────────────────────────────────────────┘   │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
                            ▼
@@ -81,9 +59,9 @@
 │  │                  │ │                  │ │                  │  │
 │  │  CLOSED → OPEN   │ │  Premium Model  │ │  BullMQ + Redis │  │
 │  │  after 5 fails   │ │  → Cheap Model  │ │  Persists when  │  │
-│  │  HALF_OPEN to    │ │  → Cache        │ │  all providers  │  │
-│  │  test recovery   │ │  → Degraded     │ │  are down       │  │
-│  │                  │ │  → Error        │ │  Retries on     │  │
+│  │  HALF_OPEN to    │ │  → Degraded     │ │  all providers  │  │
+│  │  test recovery   │ │  → Error        │ │  are down       │  │
+│  │                  │ │                  │ │  Retries on     │  │
 │  │                  │ │                  │ │  recovery       │  │
 │  └─────────────────┘ └─────────────────┘ └─────────────────┘  │
 └──────────────────────────┬──────────────────────────────────────┘
@@ -91,10 +69,10 @@
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                   POST-PROCESSING                               │
-│  ┌──────────┐ ┌──────────────┐ ┌────────────────────────────┐  │
-│  │  Cache    │ │   Billing    │ │    Observability           │  │
-│  │  Store    │ │   Track      │ │    (Logs, Metrics, Trace)  │  │
-│  └──────────┘ └──────────────┘ └────────────────────────────┘  │
+│  ┌──────────────┐ ┌────────────────────────────┐               │
+│  │   Billing    │ │    Observability           │               │
+│  │   Track      │ │    (Logs, Metrics, Trace)  │               │
+│  └──────────────┘ └────────────────────────────┘               │
 └─────────────────────────────────────────────────────────────────┘
 
                            │
@@ -109,8 +87,8 @@
 | Language | **TypeScript** | Type safety for large codebase. Node.js is I/O-bound optimal — this is a proxy/gateway, not CPU-heavy. Every AI provider has first-class Node SDKs. |
 | Runtime | **Node.js 20+ LTS** | Non-blocking event loop perfect for proxying thousands of concurrent API calls. Single-threaded simplicity, cluster for multi-core. |
 | Framework | **Fastify** | 2-3x faster than Express. Built-in schema validation (Ajv), plugin architecture, TypeScript-first. Battle-tested at scale. |
-| Database | **PostgreSQL 16 + pgvector** | Relational data (tenants, billing, keys) + vector similarity search (semantic cache) in ONE database. No separate vector DB needed. |
-| Cache/Queue | **Redis 7+** | Rate limiting (sliding window), hot cache, pub/sub for coalescing, BullMQ job persistence. |
+| Database | **PostgreSQL 16** | Relational data (tenants, billing, keys). Rock-solid, well-understood, scales with read replicas and partitioning. |
+| Cache/Queue | **Redis 7+** | Rate limiting (sliding window), hot cache, BullMQ job persistence. |
 | Job Queue | **BullMQ** | Offline queue, retry logic, dead letter queue, priority queues. Redis-backed, survives restarts. |
 | ORM | **Drizzle** | Type-safe, zero overhead, SQL-like. No magic, no hidden queries. You see exactly what hits the DB. |
 | Validation | **Zod** | Runtime type validation for all API inputs. Shared types between validation and TypeScript. |
@@ -123,7 +101,6 @@
 
 ### 1. Multi-Tenant Isolation
 Every tenant (business) is completely isolated:
-- Separate cache namespaces
 - Separate rate limit buckets
 - Separate billing counters
 - No data leakage between tenants, ever
@@ -138,7 +115,7 @@ Every request is validated at the boundary:
 ### 3. Graceful Degradation (Never Hard Fail)
 The degradation chain:
 ```
-Premium Model → Fallback Model → Cached Response → Degraded Response → Queued for Later → Error
+Premium Model → Fallback Model → Degraded Response → Queued for Later → Error
 ```
 A business should almost NEVER get a hard error. There's always a fallback.
 

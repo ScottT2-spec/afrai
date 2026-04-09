@@ -6,6 +6,12 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   API_KEY_SALT: z.string().min(16).default('afrai-dev-salt-change-me-in-prod'),
+  // Provider API keys (all optional — only configured providers are registered)
+  GROQ_API_KEY: z.string().optional(),
+  SAMBANOVA_API_KEY: z.string().optional(),
+  ANTHROPIC_API_KEY: z.string().optional(),
+  OPENAI_API_KEY: z.string().optional(),
+  GOOGLE_API_KEY: z.string().optional(),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;
