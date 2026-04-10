@@ -99,7 +99,7 @@ export class AdaptiveRouter {
 
     // Get all eligible models
     const eligible = getEligibleModels({
-      tier: request.tenantTier,
+      tenantTier: request.tenantTier,
       requiredCapabilities: (request.requiredCapabilities ?? []) as any[],
       circuitBreakerStatus: request.options?.circuitBreakerStatus,
     });
