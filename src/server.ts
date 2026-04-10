@@ -12,6 +12,7 @@ import { CircuitBreakerManager } from './resilience/circuitBreaker.js';
 import { RateLimiter } from './gateway/middleware/rateLimiter.js';
 import { UsageTracker } from './billing/tracker.js';
 import { IdempotencyService } from './gateway/middleware/idempotency.js';
+import { AdaptiveRouter } from './router/adaptiveRouter.js';
 
 /**
  * Bootstrap the AfrAI Fastify server.
@@ -52,6 +53,9 @@ export async function buildServer() {
   // Idempotency — prevents duplicate processing (24h TTL)
   const idempotencyService = new IdempotencyService(redis);
 
+  // Adaptive router — learns from request outcomes
+  const adaptiveRouter = new AdaptiveRouter();
+
   // --- Routes ---
   await server.register(async (instance) => {
     await healthRoutes(instance, {
@@ -76,6 +80,7 @@ export async function buildServer() {
     rateLimiter,
     usageTracker,
     idempotencyService,
+    adaptiveRouter,
   });
 
   // --- Graceful shutdown ---
