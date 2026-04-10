@@ -12,6 +12,7 @@
   "devDependencies": {
     "@types/node": "^20.19.39",
     "@types/pg": "^8.20.0",
+    "@vitest/coverage-v8": "^2.1.9",
     "typescript": "^5.9.3",
     "vitest": "^2.1.9"
   },
