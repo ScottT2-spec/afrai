@@ -62,6 +62,12 @@ CREATE TABLE IF NOT EXISTS wallets (
 CREATE INDEX idx_wallets_tenant_id ON wallets (tenant_id);
 
 -- ── Wallet transactions (audit trail) ───────────────────────────
+-- This table is append-only and grows fast. Partition by month for billions.
+-- To enable partitioning later:
+--   ALTER TABLE wallet_transactions RENAME TO wallet_transactions_old;
+--   CREATE TABLE wallet_transactions (...) PARTITION BY RANGE (created_at);
+--   CREATE TABLE wallet_transactions_2026_01 PARTITION OF wallet_transactions
+--     FOR VALUES FROM ('2026-01-01') TO ('2026-02-01');
 
 CREATE TABLE IF NOT EXISTS wallet_transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -74,6 +80,7 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
     -- Balance after this transaction
     balance_after_usd DECIMAL(12, 6) NOT NULL,
     -- Reference: payment ID for credits, request ID for debits
+    -- UNIQUE per type to prevent duplicate credits/debits (idempotency)
     reference_id VARCHAR(100) NOT NULL,
     -- Human-readable description
     description TEXT,
@@ -81,6 +88,8 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Idempotency: prevent duplicate credit/debit for same reference
+CREATE UNIQUE INDEX idx_wallet_txn_idempotent ON wallet_transactions (reference_id, type);
 CREATE INDEX idx_wallet_txn_tenant ON wallet_transactions (tenant_id);
 CREATE INDEX idx_wallet_txn_tenant_created ON wallet_transactions (tenant_id, created_at DESC);
 CREATE INDEX idx_wallet_txn_reference ON wallet_transactions (reference_id);
