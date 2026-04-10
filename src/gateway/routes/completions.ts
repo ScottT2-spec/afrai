@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { ChatMessageSchema } from '../../types/api.js';
 import { routeRequest, NoEligibleModelsError } from '../../router/smartRouter.js';
 import { estimateRequestCost } from '../../router/costOptimizer.js';
+import { analyzeComplexity } from '../../router/complexityAnalyzer.js';
 import { createAuthMiddleware } from '../middleware/auth.js';
 import type { ApiKeyService } from '../../services/apiKeyService.js';
 import type { ProviderRegistry } from '../../providers/registry.js';
@@ -10,6 +11,7 @@ import type { CircuitBreakerManager } from '../../resilience/circuitBreaker.js';
 import type { RateLimiter } from '../middleware/rateLimiter.js';
 import type { UsageTracker } from '../../billing/tracker.js';
 import type { IdempotencyService } from '../middleware/idempotency.js';
+import { AdaptiveRouter } from '../../router/adaptiveRouter.js';
 import type { CompletionResponse } from '../../providers/base.js';
 import type { ModelDefinition } from '../../types/provider.js';
 
@@ -41,6 +43,7 @@ export interface CompletionsRouteOptions {
   rateLimiter: RateLimiter;
   usageTracker: UsageTracker;
   idempotencyService: IdempotencyService;
+  adaptiveRouter: AdaptiveRouter;
 }
 
 // ── Route ───────────────────────────────────────────────────────
@@ -119,17 +122,21 @@ export async function completionsRoute(
 
       // ── 4. Route the request ────────────────────────────────────
       let decision;
+      const routingRequest = {
+        messages: body.messages,
+        requiredCapabilities: body.required_capabilities ?? [],
+        tenantTier: tenant.tier,
+        options: {
+          forceModel: body.model,
+          latencyWeight: 0,
+          circuitBreakerStatus: circuitBreaker.getAllStatuses(),
+        },
+      };
       try {
-        decision = await routeRequest({
-          messages: body.messages,
-          requiredCapabilities: body.required_capabilities ?? [],
-          tenantTier: tenant.tier,
-          options: {
-            forceModel: body.model,
-            latencyWeight: 0,
-            circuitBreakerStatus: circuitBreaker.getAllStatuses(),
-          },
-        });
+        // Use adaptive router when available, fall back to static
+        decision = opts.adaptiveRouter
+          ? await opts.adaptiveRouter.route(routingRequest)
+          : await routeRequest(routingRequest);
       } catch (err) {
         if (err instanceof NoEligibleModelsError) {
           return reply.code(422).send({
@@ -138,6 +145,9 @@ export async function completionsRoute(
         }
         throw err;
       }
+
+      // Analyze complexity features for outcome recording
+      const { features: complexityFeatures } = analyzeComplexity(body.messages);
 
       // ── 4. Streaming path ───────────────────────────────────────
       if (body.stream) {
@@ -209,6 +219,31 @@ export async function completionsRoute(
           status: 'error',
         });
 
+        // Record failure outcome for adaptive learning
+        if (opts.adaptiveRouter) {
+          opts.adaptiveRouter.recordOutcome({
+            inputTokens: 0,
+            complexityScore: decision.complexityScore,
+            hasCode: complexityFeatures.hasCode,
+            hasMath: complexityFeatures.hasMath,
+            hasReasoning: complexityFeatures.hasReasoningKeywords,
+            isSimpleQA: complexityFeatures.isSimpleQA,
+            turnCount: complexityFeatures.turnCount,
+            language: complexityFeatures.detectedLanguage,
+            tenantTier: tenant.tier,
+            hourOfDay: new Date().getUTCHours(),
+            modelId: decision.selectedModel.id,
+            providerId: decision.selectedModel.provider,
+            wasFallback: false,
+            success: false,
+            latencyMs: Math.round(performance.now() - requestStart),
+            costUsd: 0,
+            outputTokens: 0,
+            finishReason: 'error',
+            timestamp: Date.now(),
+          });
+        }
+
         return reply.code(502).send({
           error: {
             type: 'provider_error',
@@ -240,6 +275,31 @@ export async function completionsRoute(
         complexityScore: decision.complexityScore,
         status: usedFallback ? 'fallback' : 'success',
       });
+
+      // Feed outcome signal to adaptive router for learning
+      if (opts.adaptiveRouter) {
+        opts.adaptiveRouter.recordOutcome({
+          inputTokens: result.usage.inputTokens,
+          complexityScore: decision.complexityScore,
+          hasCode: complexityFeatures.hasCode,
+          hasMath: complexityFeatures.hasMath,
+          hasReasoning: complexityFeatures.hasReasoningKeywords,
+          isSimpleQA: complexityFeatures.isSimpleQA,
+          turnCount: complexityFeatures.turnCount,
+          language: complexityFeatures.detectedLanguage,
+          tenantTier: tenant.tier,
+          hourOfDay: new Date().getUTCHours(),
+          modelId: result.model,
+          providerId: result.provider,
+          wasFallback: usedFallback,
+          success: true,
+          latencyMs: totalLatencyMs,
+          costUsd,
+          outputTokens: result.usage.outputTokens,
+          finishReason: result.finishReason ?? 'stop',
+          timestamp: Date.now(),
+        });
+      }
 
       const responseBody = {
         id: requestId,
