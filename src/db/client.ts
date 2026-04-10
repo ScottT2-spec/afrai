@@ -15,8 +15,8 @@ export function getPool(): pg.Pool {
     const config = getConfig();
     _pool = new Pool({
       connectionString: config.DATABASE_URL,
-      max: 20,
-      idleTimeoutMillis: 30000,
+      max: config.DB_POOL_MAX,
+      idleTimeoutMillis: config.DB_POOL_IDLE_TIMEOUT_MS,
       connectionTimeoutMillis: 5000,
     });
   }

@@ -12,6 +12,16 @@ const envSchema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
   GOOGLE_API_KEY: z.string().optional(),
+  // MTN MoMo (optional — payment system only active when configured)
+  MOMO_SUBSCRIPTION_KEY: z.string().optional(),
+  MOMO_API_USER_ID: z.string().optional(),
+  MOMO_API_KEY: z.string().optional(),
+  MOMO_ENVIRONMENT: z.enum(['sandbox', 'production']).default('sandbox'),
+  MOMO_CURRENCY: z.string().default('GHS'),
+  MOMO_CALLBACK_URL: z.string().optional(),
+  // Connection pool tuning
+  DB_POOL_MAX: z.coerce.number().int().positive().default(20),
+  DB_POOL_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;
