@@ -182,7 +182,9 @@ export async function loadOnnxModel(
 
   try {
     // Dynamic import — onnxruntime-node is an optional dependency
-    const ort = await import('onnxruntime-node') as unknown as OnnxRuntime;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const moduleName = 'onnxruntime-node'; // indirection to avoid static analysis
+    const ort = await import(/* webpackIgnore: true */ moduleName) as unknown as OnnxRuntime;
     const successSession = await ort.InferenceSession.create(successModelPath);
     const latencySession = await ort.InferenceSession.create(latencyModelPath);
 
