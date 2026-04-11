@@ -1,0 +1,26 @@
+# Render Blueprint — AfrAI Gateway
+# Deploy: connect GitHub repo on render.com, it auto-detects this file
+
+services:
+  - type: web
+    name: afrai-gateway
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npx tsc
+    startCommand: node dist/server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: DATABASE_URL
+        sync: false  # Set manually (Neon connection string)
+      - key: REDIS_URL
+        sync: false  # Set manually (Upstash connection string)
+      - key: API_KEY_SALT
+        generateValue: true
+      - key: SAMBANOVA_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+    healthCheckPath: /health

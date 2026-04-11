@@ -54,7 +54,41 @@ export async function paymentRoutes(
 
   // ── GET /v1/payments/tiers ──────────────────────────────────
   // Public — no auth needed (so devs can see pricing)
-  app.get('/v1/payments/tiers', async (_request, reply) => {
+  app.get('/v1/payments/tiers', {
+    schema: {
+      tags: ['Payments'],
+      summary: 'List credit tiers',
+      description: 'View available MoMo top-up tiers with pricing in GHS and estimated API calls. No authentication required.',
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            currency: { type: 'string', examples: ['GHS'] },
+            payment_method: { type: 'string', examples: ['MTN Mobile Money'] },
+            tiers: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  amount_ghs: { type: 'number', description: 'Price in Ghana Cedis' },
+                  credits_usd: { type: 'number', description: 'API credits in USD' },
+                  label: { type: 'string' },
+                  estimated_calls: {
+                    type: 'object',
+                    properties: {
+                      cheap_model: { type: 'integer' },
+                      mid_model: { type: 'integer' },
+                      premium_model: { type: 'integer' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  }, async (_request, reply) => {
     const tiers = momoPaymentService.getCreditTiers();
 
     return reply.code(200).send({
@@ -76,7 +110,42 @@ export async function paymentRoutes(
   // ── POST /v1/payments/topup ─────────────────────────────────
   app.post(
     '/v1/payments/topup',
-    { preHandler: authHook },
+    {
+      preHandler: authHook,
+      schema: {
+        tags: ['Payments'],
+        summary: 'Initiate MoMo top-up',
+        description: 'Start a Mobile Money payment to add API credits. The user receives an approval prompt on their phone. Use the poll endpoint to wait for confirmation.',
+        security: [{ BearerAuth: [] }],
+        body: {
+          type: 'object',
+          required: ['amount', 'phone_number'],
+          properties: {
+            amount: { type: 'number', minimum: 0.01, description: 'Amount in GHS' },
+            phone_number: { type: 'string', minLength: 9, maxLength: 15, description: 'MTN MoMo phone number', examples: ['0241234567'] },
+          },
+        },
+        response: {
+          202: {
+            type: 'object',
+            description: 'Payment initiated — awaiting MoMo approval',
+            properties: {
+              payment_id: { type: 'string' },
+              momo_reference_id: { type: 'string', format: 'uuid' },
+              amount_ghs: { type: 'number' },
+              credits_usd: { type: 'number' },
+              currency: { type: 'string' },
+              status: { type: 'string', enum: ['pending'] },
+              message: { type: 'string' },
+              status_url: { type: 'string' },
+              poll_url: { type: 'string' },
+            },
+          },
+          400: { type: 'object', properties: { error: { type: 'object' } } },
+          502: { type: 'object', properties: { error: { type: 'object' } } },
+        },
+      },
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const parsed = TopUpSchema.safeParse(request.body);
       if (!parsed.success) {
@@ -139,7 +208,32 @@ export async function paymentRoutes(
   // ── GET /v1/payments/:id/status ─────────────────────────────
   app.get(
     '/v1/payments/:id/status',
-    { preHandler: authHook },
+    {
+      preHandler: authHook,
+      schema: {
+        tags: ['Payments'],
+        summary: 'Check payment status',
+        description: 'Get the current status of a MoMo payment by reference ID.',
+        security: [{ BearerAuth: [] }],
+        params: {
+          type: 'object',
+          properties: { id: { type: 'string', format: 'uuid', description: 'MoMo reference ID' } },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              momo_reference_id: { type: 'string' },
+              status: { type: 'string', enum: ['pending', 'successful', 'failed'] },
+              credits_usd: { type: 'number' },
+              failure_reason: { type: 'string', nullable: true },
+              financial_transaction_id: { type: 'string', nullable: true },
+            },
+          },
+          404: { type: 'object', properties: { error: { type: 'object' } } },
+        },
+      },
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const params = PaymentIdParams.safeParse(request.params);
       if (!params.success) {
@@ -179,7 +273,31 @@ export async function paymentRoutes(
   // Long-poll: waits up to ~60s for payment to resolve
   app.post(
     '/v1/payments/:id/poll',
-    { preHandler: authHook },
+    {
+      preHandler: authHook,
+      schema: {
+        tags: ['Payments'],
+        summary: 'Poll payment until resolved',
+        description: 'Long-polls for up to ~60 seconds until the MoMo payment succeeds or fails. Use this after initiating a top-up.',
+        security: [{ BearerAuth: [] }],
+        params: {
+          type: 'object',
+          properties: { id: { type: 'string', format: 'uuid', description: 'MoMo reference ID' } },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              momo_reference_id: { type: 'string' },
+              status: { type: 'string', enum: ['pending', 'successful', 'failed'] },
+              credits_usd: { type: 'number' },
+              failure_reason: { type: 'string', nullable: true },
+              financial_transaction_id: { type: 'string', nullable: true },
+            },
+          },
+        },
+      },
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const params = PaymentIdParams.safeParse(request.params);
       if (!params.success) {
@@ -214,7 +332,26 @@ export async function paymentRoutes(
   // ── GET /v1/wallet/balance ──────────────────────────────────
   app.get(
     '/v1/wallet/balance',
-    { preHandler: authHook },
+    {
+      preHandler: authHook,
+      schema: {
+        tags: ['Wallet'],
+        summary: 'Get wallet balance',
+        description: 'Returns the current API credit balance for the authenticated tenant.',
+        security: [{ BearerAuth: [] }],
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              tenant_id: { type: 'string' },
+              balance_usd: { type: 'string', description: 'Available API credits in USD' },
+              total_purchased_usd: { type: 'string' },
+              total_spent_usd: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const tenant = request.tenantContext;
       if (!tenant) {
@@ -246,7 +383,46 @@ export async function paymentRoutes(
   // ── GET /v1/wallet/history ──────────────────────────────────
   app.get(
     '/v1/wallet/history',
-    { preHandler: authHook },
+    {
+      preHandler: authHook,
+      schema: {
+        tags: ['Wallet'],
+        summary: 'Get payment history',
+        description: 'Returns recent MoMo payment transactions for the authenticated tenant.',
+        security: [{ BearerAuth: [] }],
+        querystring: {
+          type: 'object',
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 100, default: 20, description: 'Number of records to return' },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              payments: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string' },
+                    momo_reference_id: { type: 'string' },
+                    phone_number: { type: 'string' },
+                    amount_ghs: { type: 'number' },
+                    credits_usd: { type: 'number' },
+                    currency: { type: 'string' },
+                    status: { type: 'string' },
+                    failure_reason: { type: 'string', nullable: true },
+                    created_at: { type: 'string', format: 'date-time' },
+                    updated_at: { type: 'string', format: 'date-time' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const tenant = request.tenantContext;
       if (!tenant) {
@@ -281,6 +457,24 @@ export async function paymentRoutes(
   // MTN sends payment result here (no auth — validated by reference ID)
   app.post(
     '/v1/payments/momo/callback',
+    {
+      schema: {
+        tags: ['Payments'],
+        summary: 'MoMo callback webhook',
+        description: 'Receives payment confirmation from MTN. This endpoint is called by MTN servers, not by API consumers.',
+        body: {
+          type: 'object',
+          properties: {
+            referenceId: { type: 'string', format: 'uuid' },
+            status: { type: 'string' },
+            financialTransactionId: { type: 'string' },
+          },
+        },
+        response: {
+          200: { type: 'object', properties: { received: { type: 'boolean' } } },
+        },
+      },
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
         const body = request.body as Record<string, unknown>;

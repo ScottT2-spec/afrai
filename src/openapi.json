@@ -1,0 +1,491 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "AfrAI",
+    "description": "AI Infrastructure for Africa 🌍 — Smart model routing, semantic caching, and MoMo payments. The first AI API platform built for African developers.",
+    "version": "0.1.0",
+    "contact": {
+      "name": "Alpha Global Minds",
+      "email": "scottantwi930@gmail.com",
+      "url": "https://github.com/ScottT2-spec/afrai"
+    },
+    "license": {
+      "name": "MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.afrai.dev",
+      "description": "Production"
+    },
+    {
+      "url": "http://localhost:3000",
+      "description": "Development"
+    }
+  ],
+  "tags": [
+    { "name": "Completions", "description": "AI model completions with smart routing" },
+    { "name": "Payments", "description": "MTN MoMo payment system — first AI API to accept Mobile Money" },
+    { "name": "Wallet", "description": "Wallet balance and transaction history" },
+    { "name": "Router", "description": "Adaptive learning router stats and configuration" },
+    { "name": "System", "description": "Health checks and system status" }
+  ],
+  "security": [
+    { "BearerAuth": [] }
+  ],
+  "paths": {
+    "/v1/completion": {
+      "post": {
+        "tags": ["Completions"],
+        "summary": "Create a completion",
+        "description": "Route a request to the optimal AI model based on complexity, cost, and latency. Supports GPT-4o, Claude 3.5 Sonnet, Llama 3.3 70B, and more. The smart router automatically selects the best model — or specify one manually.",
+        "operationId": "createCompletion",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CompletionRequest" },
+              "example": {
+                "messages": [
+                  { "role": "system", "content": "You are a helpful assistant." },
+                  { "role": "user", "content": "Explain quantum computing in simple terms" }
+                ],
+                "max_tokens": 1024,
+                "temperature": 0.7
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful completion",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CompletionResponse" }
+              }
+            }
+          },
+          "400": { "description": "Invalid request body" },
+          "401": { "description": "Invalid or missing API key" },
+          "422": { "description": "No eligible models for this request" },
+          "429": { "description": "Rate limit exceeded" },
+          "502": { "description": "All providers failed" }
+        }
+      }
+    },
+    "/v1/payments/tiers": {
+      "get": {
+        "tags": ["Payments"],
+        "summary": "List credit tiers",
+        "description": "Get available MoMo top-up tiers with GHS amounts, USD credits, and estimated API calls per model tier. No authentication required.",
+        "operationId": "listCreditTiers",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Credit tiers",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CreditTiersResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/payments/topup": {
+      "post": {
+        "tags": ["Payments"],
+        "summary": "Initiate MoMo top-up",
+        "description": "Start a wallet top-up via MTN Mobile Money. Sends a USSD prompt to the customer's phone. They confirm with their MoMo PIN and credits are added to their wallet.",
+        "operationId": "initiateTopUp",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TopUpRequest" },
+              "example": {
+                "amount": 50,
+                "phone_number": "0241234567"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Payment request sent — customer needs to confirm on their phone",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TopUpResponse" }
+              }
+            }
+          },
+          "400": { "description": "Validation error (invalid amount or phone number)" },
+          "401": { "description": "Invalid API key" },
+          "502": { "description": "MoMo API error" }
+        }
+      }
+    },
+    "/v1/payments/{id}/status": {
+      "get": {
+        "tags": ["Payments"],
+        "summary": "Check payment status",
+        "description": "Check the current status of a MoMo payment (pending, successful, failed, expired).",
+        "operationId": "checkPaymentStatus",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "MoMo reference ID (UUID)",
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payment status",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PaymentStatus" }
+              }
+            }
+          },
+          "404": { "description": "Payment not found" }
+        }
+      }
+    },
+    "/v1/payments/{id}/poll": {
+      "post": {
+        "tags": ["Payments"],
+        "summary": "Poll payment until resolved",
+        "description": "Long-poll: waits up to ~60 seconds for the payment to resolve (successful or failed). Use this for synchronous payment flows.",
+        "operationId": "pollPayment",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Resolved payment status",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PaymentStatus" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/wallet/balance": {
+      "get": {
+        "tags": ["Wallet"],
+        "summary": "Get wallet balance",
+        "description": "Get the current wallet balance, total purchased, and total spent for the authenticated tenant.",
+        "operationId": "getWalletBalance",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Wallet balance",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/WalletBalance" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/wallet/history": {
+      "get": {
+        "tags": ["Wallet"],
+        "summary": "Get payment history",
+        "description": "List all MoMo payment records for the authenticated tenant, most recent first.",
+        "operationId": "getPaymentHistory",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum results to return (1-100)",
+            "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 100 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payment history",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PaymentHistory" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/payments/momo/callback": {
+      "post": {
+        "tags": ["Payments"],
+        "summary": "MTN MoMo callback",
+        "description": "Webhook endpoint for MTN to send payment completion notifications. Internal use only.",
+        "operationId": "momoCallback",
+        "security": [],
+        "responses": {
+          "200": { "description": "Callback received" }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Health check",
+        "description": "Check if the AfrAI gateway is running and all dependencies (PostgreSQL, Redis) are healthy.",
+        "operationId": "healthCheck",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Service healthy",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HealthResponse" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "AfrAI API key (format: afr_live_xxxxxxxxxx)"
+      }
+    },
+    "schemas": {
+      "CompletionRequest": {
+        "type": "object",
+        "required": ["messages"],
+        "properties": {
+          "messages": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/components/schemas/ChatMessage" },
+            "description": "Conversation messages (OpenAI-compatible format)"
+          },
+          "model": {
+            "type": "string",
+            "description": "Force a specific model — bypasses smart routing",
+            "example": "gpt-4o"
+          },
+          "max_tokens": {
+            "type": "integer",
+            "description": "Maximum tokens to generate",
+            "example": 1024
+          },
+          "temperature": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 2,
+            "description": "Sampling temperature (0.0–2.0)",
+            "example": 0.7
+          },
+          "stream": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enable streaming (SSE)"
+          },
+          "required_capabilities": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Required model capabilities (e.g., 'code', 'reasoning', 'vision')"
+          }
+        }
+      },
+      "ChatMessage": {
+        "type": "object",
+        "required": ["role", "content"],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": ["system", "user", "assistant"],
+            "description": "Message role"
+          },
+          "content": {
+            "type": "string",
+            "description": "Message content"
+          }
+        }
+      },
+      "CompletionResponse": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "Request ID" },
+          "object": { "type": "string", "example": "chat.completion" },
+          "model": { "type": "string", "description": "Model used", "example": "llama-3.3-70b-versatile" },
+          "provider": { "type": "string", "description": "Provider used", "example": "groq" },
+          "choices": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "index": { "type": "integer" },
+                "message": {
+                  "type": "object",
+                  "properties": {
+                    "role": { "type": "string" },
+                    "content": { "type": "string" }
+                  }
+                },
+                "finish_reason": { "type": "string" }
+              }
+            }
+          },
+          "usage": {
+            "type": "object",
+            "properties": {
+              "input_tokens": { "type": "integer" },
+              "output_tokens": { "type": "integer" },
+              "total_tokens": { "type": "integer" },
+              "cost_usd": { "type": "number", "description": "Estimated cost in USD" }
+            }
+          },
+          "routing": {
+            "type": "object",
+            "properties": {
+              "complexity_score": { "type": "number", "description": "Request complexity (0.0–1.0)" },
+              "reasoning": { "type": "string", "description": "Why this model was selected" },
+              "fallbacks_available": { "type": "integer" }
+            }
+          },
+          "latency_ms": { "type": "integer", "description": "Total response time in ms" }
+        }
+      },
+      "TopUpRequest": {
+        "type": "object",
+        "required": ["amount", "phone_number"],
+        "properties": {
+          "amount": {
+            "type": "number",
+            "minimum": 5,
+            "maximum": 5000,
+            "description": "Amount in GHS",
+            "example": 50
+          },
+          "phone_number": {
+            "type": "string",
+            "description": "MTN MoMo phone number (Ghana)",
+            "example": "0241234567"
+          }
+        }
+      },
+      "TopUpResponse": {
+        "type": "object",
+        "properties": {
+          "payment_id": { "type": "string", "format": "uuid" },
+          "momo_reference_id": { "type": "string", "format": "uuid" },
+          "amount_ghs": { "type": "number", "example": 50 },
+          "credits_usd": { "type": "number", "example": 3.20 },
+          "currency": { "type": "string", "example": "GHS" },
+          "status": { "type": "string", "example": "pending" },
+          "message": { "type": "string", "example": "Payment request sent! Check your phone and enter your MoMo PIN to confirm." },
+          "status_url": { "type": "string" },
+          "poll_url": { "type": "string" }
+        }
+      },
+      "PaymentStatus": {
+        "type": "object",
+        "properties": {
+          "momo_reference_id": { "type": "string", "format": "uuid" },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "successful", "failed", "expired"]
+          },
+          "credits_usd": { "type": "number" },
+          "failure_reason": { "type": "string", "nullable": true },
+          "financial_transaction_id": { "type": "string", "nullable": true }
+        }
+      },
+      "CreditTiersResponse": {
+        "type": "object",
+        "properties": {
+          "currency": { "type": "string", "example": "GHS" },
+          "payment_method": { "type": "string", "example": "MTN Mobile Money" },
+          "tiers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "amount_ghs": { "type": "number", "example": 50 },
+                "credits_usd": { "type": "number", "example": 3.20 },
+                "label": { "type": "string", "example": "Pro — 50 GHS" },
+                "estimated_calls": {
+                  "type": "object",
+                  "properties": {
+                    "cheap_model": { "type": "integer", "example": 16000 },
+                    "mid_model": { "type": "integer", "example": 1600 },
+                    "premium_model": { "type": "integer", "example": 213 }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "WalletBalance": {
+        "type": "object",
+        "properties": {
+          "tenant_id": { "type": "string", "format": "uuid" },
+          "balance_usd": { "type": "string", "example": "5.200000" },
+          "total_purchased_usd": { "type": "string", "example": "10.000000" },
+          "total_spent_usd": { "type": "string", "example": "4.800000" }
+        }
+      },
+      "PaymentHistory": {
+        "type": "object",
+        "properties": {
+          "payments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "format": "uuid" },
+                "momo_reference_id": { "type": "string", "format": "uuid" },
+                "phone_number": { "type": "string" },
+                "amount_ghs": { "type": "string" },
+                "credits_usd": { "type": "string" },
+                "currency": { "type": "string" },
+                "status": { "type": "string" },
+                "failure_reason": { "type": "string", "nullable": true },
+                "created_at": { "type": "string", "format": "date-time" },
+                "updated_at": { "type": "string", "format": "date-time" }
+              }
+            }
+          }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "example": "ok" },
+          "version": { "type": "string", "example": "0.1.0" },
+          "uptime": { "type": "number" },
+          "checks": {
+            "type": "object",
+            "properties": {
+              "database": { "type": "boolean" },
+              "redis": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

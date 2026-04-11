@@ -63,7 +63,111 @@ export async function completionsRoute(
 
   app.post(
     '/v1/completion',
-    { preHandler: authHook },
+    {
+      preHandler: authHook,
+      schema: {
+        tags: ['Completions'],
+        summary: 'Create a chat completion',
+        description:
+          'Send messages to an AI model and receive a response. AfrAI automatically routes to the optimal model based on request complexity, cost, and provider health. Supports streaming via SSE.',
+        security: [{ BearerAuth: [] }],
+        headers: {
+          type: 'object',
+          properties: {
+            'x-idempotency-key': {
+              type: 'string',
+              format: 'uuid',
+              description: 'Optional idempotency key to prevent duplicate processing (24h TTL)',
+            },
+          },
+        },
+        body: {
+          type: 'object',
+          required: ['messages'],
+          properties: {
+            messages: {
+              type: 'array',
+              minItems: 1,
+              description: 'Conversation messages (OpenAI-compatible format)',
+              items: {
+                type: 'object',
+                required: ['role', 'content'],
+                properties: {
+                  role: { type: 'string', enum: ['system', 'user', 'assistant'], description: 'Message role' },
+                  content: { type: 'string', description: 'Message content' },
+                },
+              },
+            },
+            model: { type: 'string', description: 'Force a specific model — bypasses smart routing', examples: ['llama-3.3-70b-versatile', 'claude-3-5-sonnet-20241022'] },
+            max_tokens: { type: 'integer', minimum: 1, description: 'Maximum tokens to generate' },
+            temperature: { type: 'number', minimum: 0, maximum: 2, description: 'Sampling temperature (0.0–2.0)' },
+            stream: { type: 'boolean', default: false, description: 'Enable streaming (SSE)' },
+            required_capabilities: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Required model capabilities (e.g. code, reasoning, vision)',
+            },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            description: 'Successful completion response',
+            properties: {
+              id: { type: 'string', description: 'Request ID' },
+              object: { type: 'string', enum: ['chat.completion'] },
+              model: { type: 'string', description: 'Model used for inference' },
+              provider: { type: 'string', description: 'Provider that served the request' },
+              choices: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    index: { type: 'integer' },
+                    message: {
+                      type: 'object',
+                      properties: {
+                        role: { type: 'string' },
+                        content: { type: 'string' },
+                      },
+                    },
+                    finish_reason: { type: 'string' },
+                  },
+                },
+              },
+              usage: {
+                type: 'object',
+                properties: {
+                  input_tokens: { type: 'integer' },
+                  output_tokens: { type: 'integer' },
+                  total_tokens: { type: 'integer' },
+                  cost_usd: { type: 'number', description: 'Estimated cost in USD' },
+                },
+              },
+              routing: {
+                type: 'object',
+                description: 'Smart routing metadata',
+                properties: {
+                  complexity_score: { type: 'number', description: 'Request complexity (0–1)' },
+                  reasoning: { type: 'string', description: 'Why this model was chosen' },
+                  fallbacks_available: { type: 'integer' },
+                },
+              },
+              latency_ms: { type: 'integer' },
+            },
+          },
+          400: { type: 'object', properties: { error: { type: 'object', properties: { type: { type: 'string' }, message: { type: 'string' } } } } },
+          401: { type: 'object', properties: { error: { type: 'object', properties: { type: { type: 'string' }, message: { type: 'string' } } } } },
+          422: { type: 'object', properties: { error: { type: 'object', properties: { type: { type: 'string' }, message: { type: 'string' } } } } },
+          429: {
+            type: 'object',
+            description: 'Rate limit exceeded',
+            properties: { error: { type: 'object', properties: { type: { type: 'string' }, message: { type: 'string' }, retry_after_ms: { type: 'integer' } } } },
+          },
+          502: { type: 'object', properties: { error: { type: 'object', properties: { type: { type: 'string' }, message: { type: 'string' } } } } },
+        },
+      },
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const requestId = (request as unknown as Record<string, unknown>).requestId as string ?? crypto.randomUUID();
       const requestStart = performance.now();
