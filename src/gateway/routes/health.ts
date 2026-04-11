@@ -18,7 +18,22 @@ export async function healthRoutes(
   deps: HealthDeps,
 ): Promise<void> {
   /** Liveness — if you can hit this, the server is alive */
-  fastify.get('/health', async (_request, reply) => {
+  fastify.get('/health', {
+    schema: {
+      tags: ['Health'],
+      summary: 'Liveness check',
+      description: 'Returns 200 if the server is alive. No dependency checks.',
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', enum: ['ok'] },
+            timestamp: { type: 'string', format: 'date-time' },
+          },
+        },
+      },
+    },
+  }, async (_request, reply) => {
     return reply.code(200).send({
       status: 'ok',
       timestamp: new Date().toISOString(),
@@ -26,7 +41,37 @@ export async function healthRoutes(
   });
 
   /** Readiness — checks downstream dependencies */
-  fastify.get('/health/ready', async (_request, reply) => {
+  fastify.get('/health/ready', {
+    schema: {
+      tags: ['Health'],
+      summary: 'Readiness check',
+      description: 'Checks database and Redis connectivity. Returns 503 if any dependency is down.',
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', enum: ['ready'] },
+            checks: {
+              type: 'object',
+              properties: {
+                database: { type: 'string', enum: ['ok', 'fail'] },
+                redis: { type: 'string', enum: ['ok', 'fail'] },
+              },
+            },
+            timestamp: { type: 'string', format: 'date-time' },
+          },
+        },
+        503: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', enum: ['degraded'] },
+            checks: { type: 'object' },
+            timestamp: { type: 'string', format: 'date-time' },
+          },
+        },
+      },
+    },
+  }, async (_request, reply) => {
     const checks: Record<string, string> = {};
     let healthy = true;
 

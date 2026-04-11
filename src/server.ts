@@ -1,4 +1,6 @@
 import Fastify from 'fastify';
+import swagger from '@fastify/swagger';
+import swaggerUi from '@fastify/swagger-ui';
 import { getConfig } from './config/index.js';
 import tenantContextPlugin from './gateway/plugins/tenantContext.js';
 import { requestIdMiddleware } from './gateway/middleware/requestId.js';
@@ -31,6 +33,73 @@ export async function buildServer() {
   const server = Fastify({
     logger: {
       level: config.NODE_ENV === 'production' ? 'info' : 'debug',
+    },
+  });
+
+  // --- OpenAPI / Swagger ---
+  await server.register(swagger, {
+    openapi: {
+      openapi: '3.1.0',
+      info: {
+        title: 'AfrAI — AI Infrastructure for Africa',
+        description:
+          'Smart model routing, semantic caching, and offline-first AI gateway built for the African continent.\n\n' +
+          '## Features\n' +
+          '- **Smart Routing** — Complexity-aware model selection with adaptive ML learning\n' +
+          '- **Multi-Provider** — OpenAI, Anthropic, Google, Groq, SambaNova with automatic fallback\n' +
+          '- **Mobile Money Payments** — MTN MoMo integration (first AI API to accept Mobile Money)\n' +
+          '- **Circuit Breaker** — Per-provider health tracking with automatic failover\n' +
+          '- **Rate Limiting** — Token-aware sliding window with Redis\n' +
+          '- **Idempotency** — Request deduplication with 24h TTL\n' +
+          '- **Streaming** — Server-Sent Events (SSE) for real-time responses\n' +
+          '- **Usage Tracking** — Per-request cost and token billing\n\n' +
+          '## Authentication\n' +
+          'All protected endpoints require an API key via the `Authorization` header:\n' +
+          '```\nAuthorization: Bearer afr_your_api_key\n```\n\n' +
+          '## Made in Ghana 🇬🇭 by Alpha Global Minds',
+        version: '0.1.0',
+        contact: {
+          name: 'Scott Antwi',
+          url: 'https://github.com/ScottT2-spec/afrai',
+        },
+        license: {
+          name: 'MIT',
+        },
+      },
+      servers: [
+        { url: '/', description: 'Current server' },
+      ],
+      tags: [
+        { name: 'Health', description: 'Server health and readiness checks' },
+        { name: 'Completions', description: 'AI model inference — the core route' },
+        { name: 'Payments', description: 'MTN Mobile Money top-ups and wallet management' },
+        { name: 'Wallet', description: 'Credit balance and transaction history' },
+      ],
+      components: {
+        securitySchemes: {
+          BearerAuth: {
+            type: 'http',
+            scheme: 'bearer',
+            bearerFormat: 'API Key',
+            description: 'AfrAI API key (starts with afr_)',
+          },
+        },
+      },
+    },
+  });
+
+  await server.register(swaggerUi, {
+    routePrefix: '/docs',
+    uiConfig: {
+      docExpansion: 'list',
+      deepLinking: true,
+      displayRequestDuration: true,
+      filter: true,
+      tryItOutEnabled: false,
+    },
+    staticCSP: false,
+    theme: {
+      title: 'AfrAI API Docs',
     },
   });
 
