@@ -13,11 +13,16 @@ let _pool: pg.Pool | null = null;
 export function getPool(): pg.Pool {
   if (!_pool) {
     const config = getConfig();
+    // Strip sslmode from URL (we handle SSL manually via the ssl option)
+    const cleanUrl = config.DATABASE_URL.replace(/[?&]sslmode=[^&]*/g, '').replace(/\?$/, '');
+    const needsSsl = config.DATABASE_URL.includes('supabase') || config.DATABASE_URL.includes('sslmode=require') || config.NODE_ENV === 'production';
+
     _pool = new Pool({
-      connectionString: config.DATABASE_URL,
+      connectionString: cleanUrl,
       max: config.DB_POOL_MAX,
       idleTimeoutMillis: config.DB_POOL_IDLE_TIMEOUT_MS,
       connectionTimeoutMillis: 5000,
+      ssl: needsSsl ? { rejectUnauthorized: false } : false,
     });
   }
   return _pool;

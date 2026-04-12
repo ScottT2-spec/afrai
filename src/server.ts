@@ -113,7 +113,7 @@ export async function buildServer() {
   // --- Services ---
   const providerRegistry = createProviderRegistry();
   const db = getDb();
-  const redis = getRedis();
+  const redis = getRedis() as any;
 
   // Redis-backed cache for API key lookups
   const cacheClient = createRedisCacheClient(redis);
@@ -233,6 +233,11 @@ export async function buildServer() {
       providerRegistry,
       startedAt,
     });
+  });
+
+  // Root redirect to docs
+  server.get('/', async (_req, reply) => {
+    return reply.redirect('/docs');
   });
 
   // --- Graceful shutdown ---
