@@ -25,4 +25,5 @@ COPY --from=builder /app/dist ./dist
 ENV PORT=7860
 EXPOSE 7860
 
-CMD ["node", "dist/src/docs-server.js"]
+# Run the full server (with docs at /docs)
+CMD ["node", "dist/src/server.js"]
