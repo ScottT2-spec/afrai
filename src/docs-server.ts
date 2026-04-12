@@ -57,6 +57,7 @@ async function buildDocsServer() {
         { name: 'Completions', description: 'AI model inference — the core route' },
         { name: 'Payments', description: 'MTN Mobile Money top-ups and wallet management' },
         { name: 'Wallet', description: 'Credit balance and transaction history' },
+        { name: 'Admin', description: 'Internal monitoring — router stats, provider health, system info' },
       ],
       components: {
         securitySchemes: {
@@ -455,6 +456,219 @@ async function buildDocsServer() {
       },
     },
   }, async () => ({ payments: [] }));
+
+  // ─── Admin ────────────────────────────────────────────────────
+
+  server.get('/v1/admin/router/stats', {
+    schema: {
+      tags: ['Admin'],
+      summary: 'Adaptive router statistics',
+      description:
+        'Returns the current state of the adaptive ML router: mode (cold_start → warm_up → adaptive), ' +
+        'total observations, exploration rate, and whether an XGBoost model is loaded.\n\n' +
+        '**Mode progression:**\n' +
+        '- `cold_start` (<10K requests): Static rules only\n' +
+        '- `warm_up` (10K–50K): Blends Bayesian scores with static routing\n' +
+        '- `adaptive` (>50K): Full XGBoost ML model with Thompson Sampling exploration',
+      security: [{ BearerAuth: [] }],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            mode: {
+              type: 'string',
+              enum: ['cold_start', 'warm_up', 'adaptive'],
+              description: 'Current routing intelligence level',
+            },
+            total_observations: { type: 'integer', description: 'Total requests processed and learned from' },
+            exploration_rate: { type: 'number', description: 'Probability of trying a random model for learning (decays over time)' },
+            has_xgboost: { type: 'boolean', description: 'Whether a trained XGBoost model is loaded' },
+            thresholds: {
+              type: 'object',
+              properties: {
+                cold_to_warmup: { type: 'integer' },
+                warmup_to_adaptive: { type: 'integer' },
+              },
+            },
+            progress: {
+              type: 'object',
+              description: 'Progress toward next routing mode',
+              properties: {
+                next_mode: { type: 'string' },
+                observations_needed: { type: 'integer' },
+                percent_complete: { type: 'number' },
+              },
+            },
+          },
+        },
+      },
+    },
+  }, async () => ({
+    mode: 'cold_start',
+    total_observations: 0,
+    exploration_rate: 0.1,
+    has_xgboost: false,
+    thresholds: { cold_to_warmup: 10000, warmup_to_adaptive: 50000 },
+    progress: { next_mode: 'warm_up', observations_needed: 10000, percent_complete: 0 },
+  }));
+
+  server.get('/v1/admin/router/models', {
+    schema: {
+      tags: ['Admin'],
+      summary: 'Per-model performance breakdown',
+      description:
+        'Returns detailed scoring statistics for every model tracked by the adaptive router, ' +
+        'broken down by complexity bucket (trivial, simple, medium, complex, expert).',
+      security: [{ BearerAuth: [] }],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            total_models_tracked: { type: 'integer' },
+            models: {
+              type: 'object',
+              description: 'Map of "modelId:complexityBucket" → performance stats',
+              additionalProperties: {
+                type: 'object',
+                properties: {
+                  request_count: { type: 'integer' },
+                  successes: { type: 'integer' },
+                  failures: { type: 'integer' },
+                  success_rate: { type: 'number', description: '0.0–1.0' },
+                  avg_latency_ms: { type: 'number' },
+                  avg_cost_usd: { type: 'number' },
+                  latency_variance: { type: 'number' },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  }, async () => ({ total_models_tracked: 0, models: {} }));
+
+  server.get('/v1/admin/providers', {
+    schema: {
+      tags: ['Admin'],
+      summary: 'Provider health and circuit breaker status',
+      description:
+        'Returns health status of all registered AI providers.\n\n' +
+        '**Circuit breaker states:**\n' +
+        '- `closed` = healthy, accepting requests\n' +
+        '- `open` = failing, requests blocked (auto-recovery after cooldown)\n' +
+        '- `half_open` = testing recovery with a single probe request',
+      security: [{ BearerAuth: [] }],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            providers: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string', description: 'Provider identifier', examples: ['groq', 'anthropic', 'openai', 'google', 'sambanova'] },
+                  circuit_breaker: { type: 'string', enum: ['closed', 'open', 'half_open'] },
+                  can_receive_requests: { type: 'boolean' },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  }, async () => ({
+    providers: [
+      { id: 'groq', circuit_breaker: 'closed', can_receive_requests: true },
+      { id: 'anthropic', circuit_breaker: 'closed', can_receive_requests: true },
+      { id: 'openai', circuit_breaker: 'closed', can_receive_requests: true },
+      { id: 'google', circuit_breaker: 'closed', can_receive_requests: true },
+      { id: 'sambanova', circuit_breaker: 'closed', can_receive_requests: true },
+    ],
+  }));
+
+  server.get('/v1/admin/system', {
+    schema: {
+      tags: ['Admin'],
+      summary: 'System overview',
+      description: 'Returns server uptime, version, memory usage, and feature flags.',
+      security: [{ BearerAuth: [] }],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            version: { type: 'string' },
+            environment: { type: 'string' },
+            uptime_seconds: { type: 'integer' },
+            uptime_human: { type: 'string' },
+            started_at: { type: 'string', format: 'date-time' },
+            node_version: { type: 'string' },
+            memory_usage_mb: {
+              type: 'object',
+              properties: {
+                rss: { type: 'number' },
+                heap_total: { type: 'number' },
+                heap_used: { type: 'number' },
+              },
+            },
+            features: {
+              type: 'object',
+              description: 'Enabled platform features',
+              properties: {
+                adaptive_router: { type: 'boolean' },
+                xgboost_model: { type: 'boolean' },
+                momo_payments: { type: 'boolean' },
+                circuit_breaker: { type: 'boolean' },
+                rate_limiting: { type: 'boolean' },
+                idempotency: { type: 'boolean' },
+              },
+            },
+          },
+        },
+      },
+    },
+  }, async () => ({
+    version: '0.1.0',
+    environment: 'production',
+    uptime_seconds: 3600,
+    uptime_human: '1h 0m 0s',
+    started_at: new Date().toISOString(),
+    node_version: process.version,
+    memory_usage_mb: { rss: 45.2, heap_total: 30.1, heap_used: 22.8 },
+    features: {
+      adaptive_router: true,
+      xgboost_model: false,
+      momo_payments: true,
+      circuit_breaker: true,
+      rate_limiting: true,
+      idempotency: true,
+    },
+  }));
+
+  server.post('/v1/admin/router/reset', {
+    schema: {
+      tags: ['Admin'],
+      summary: 'Reset adaptive router (danger zone)',
+      description:
+        '⚠️ Resets all learned model scores and observations. The router reverts to cold start mode. ' +
+        'Use only if stats are corrupted or you want to re-learn from scratch.',
+      security: [{ BearerAuth: [] }],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            reset: { type: 'boolean' },
+            message: { type: 'string' },
+            previous_observations: { type: 'integer' },
+          },
+        },
+      },
+    },
+  }, async () => ({
+    reset: true,
+    message: 'Adaptive router has been reset to cold start mode. All learned stats cleared.',
+    previous_observations: 0,
+  }));
 
   // ─── Root redirect ────────────────────────────────────────────
 
