@@ -22,6 +22,7 @@ import { PostgresWalletStore } from './payments/walletStore.js';
 import { PostgresPaymentStore } from './payments/paymentStore.js';
 import { CachedWalletStore } from './payments/cachedWallet.js';
 import { paymentRoutes } from './gateway/routes/payments.js';
+import { adminRoutes } from './gateway/routes/admin.js';
 import type { MomoConfig } from './payments/momoTypes.js';
 
 /**
@@ -209,6 +210,9 @@ export async function buildServer() {
     });
   });
 
+  // Track server start time for admin uptime
+  const startedAt = Date.now();
+
   // Completions — the core route: auth → rate limit → router → provider → response
   await server.register(completionsRoute, {
     apiKeyService,
@@ -218,6 +222,17 @@ export async function buildServer() {
     usageTracker,
     idempotencyService,
     adaptiveRouter,
+  });
+
+  // Admin — router stats, provider health, system info
+  await server.register(async (instance) => {
+    await adminRoutes(instance, {
+      apiKeyService,
+      adaptiveRouter,
+      circuitBreaker,
+      providerRegistry,
+      startedAt,
+    });
   });
 
   // --- Graceful shutdown ---
