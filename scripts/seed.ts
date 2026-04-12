@@ -38,12 +38,12 @@ async function seed() {
     [tenant.id, keyHash, prefix, 'Default Key', ['completions', 'embeddings'], 1000]
   );
 
-  console.log('\n🚀 Tenant created!');
+  console.log('\n Tenant created!');
   console.log(`   Name:    ${tenantName}`);
   console.log(`   Email:   ${tenantEmail}`);
   console.log(`   Tier:    growth`);
   console.log(`   API Key: ${rawKey}`);
-  console.log('\n⚠️  Save this key — it won\'t be shown again.\n');
+  console.log('\n  Save this key — it won\'t be shown again.\n');
 
   await pool.end();
 }
