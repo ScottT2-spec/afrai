@@ -23,7 +23,7 @@ export default function Register() {
         localStorage.setItem('afrai_tenant_name', name)
       }
     } catch (err) {
-      setError(err.message)
+      setError(typeof err === 'string' ? err : err?.message || 'Something went wrong — try again')
     } finally {
       setLoading(false)
     }
