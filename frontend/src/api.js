@@ -1,12 +1,35 @@
 const BASE = import.meta.env.VITE_API_URL || 'https://scott-123-afrai.hf.space'
 
 async function request(path, options = {}) {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
-    ...options,
-  })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`)
+  let res
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      headers: { 'Content-Type': 'application/json', ...options.headers },
+      ...options,
+    })
+  } catch (networkErr) {
+    throw new Error('Network error — check your connection or try again')
+  }
+
+  let data
+  try {
+    data = await res.json()
+  } catch {
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return {}
+  }
+
+  if (!res.ok) {
+    const errField = data?.error
+    const msg =
+      typeof data === 'string'
+        ? data
+        : data?.detail
+          || (typeof errField === 'string' ? errField : errField?.message)
+          || data?.message
+          || `HTTP ${res.status}`
+    throw new Error(msg)
+  }
   return data
 }
 
