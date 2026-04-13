@@ -23,6 +23,7 @@ import { PostgresPaymentStore } from './payments/paymentStore.js';
 import { CachedWalletStore } from './payments/cachedWallet.js';
 import { paymentRoutes } from './gateway/routes/payments.js';
 import { adminRoutes } from './gateway/routes/admin.js';
+import { authRoutes } from './gateway/routes/auth.js';
 import type { MomoConfig } from './payments/momoTypes.js';
 
 /**
@@ -71,6 +72,7 @@ export async function buildServer() {
         { url: '/', description: 'Current server' },
       ],
       tags: [
+        { name: 'Auth', description: 'Register and get your API key' },
         { name: 'Health', description: 'Server health and readiness checks' },
         { name: 'Completions', description: 'AI model inference — the core route' },
         { name: 'Payments', description: 'MTN Mobile Money top-ups and wallet management' },
@@ -222,6 +224,11 @@ export async function buildServer() {
     usageTracker,
     idempotencyService,
     adaptiveRouter,
+  });
+
+  // Auth — self-service registration
+  await server.register(async (instance) => {
+    await authRoutes(instance, { apiKeyService });
   });
 
   // Admin — router stats, provider health, system info
