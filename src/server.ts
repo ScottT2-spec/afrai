@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import cors from '@fastify/cors';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import { getConfig } from './config/index.js';
@@ -36,6 +37,18 @@ export async function buildServer() {
     logger: {
       level: config.NODE_ENV === 'production' ? 'info' : 'debug',
     },
+  });
+
+  // --- CORS (allow frontend origins) ---
+  await server.register(cors, {
+    origin: [
+      /\.vercel\.app$/,
+      /localhost:\d+$/,
+      'https://afrai.vercel.app',
+    ],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
   });
 
   // --- OpenAPI / Swagger ---
