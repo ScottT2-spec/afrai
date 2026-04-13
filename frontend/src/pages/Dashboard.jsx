@@ -14,6 +14,17 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
+  const [showKeyInput, setShowKeyInput] = useState(false)
+  const [manualKey, setManualKey] = useState('')
+
+  function handleSetKey(e) {
+    e.preventDefault()
+    if (manualKey.trim()) {
+      localStorage.setItem('afrai_api_key', manualKey.trim())
+      window.location.reload()
+    }
+  }
+
   useEffect(() => {
     if (!apiKey) {
       navigate('/register')
@@ -25,10 +36,10 @@ export default function Dashboard() {
       .then(() => setApiStatus('online'))
       .catch(() => setApiStatus('offline'))
 
-    // Fetch balance
+    // Fetch balance (endpoint may not exist yet)
     getBalance(apiKey)
       .then(data => setBalance(data))
-      .catch(() => {})
+      .catch(() => setBalance({ balance: 'N/A' }))
   }, [apiKey, navigate])
 
   async function handleTest(e) {
@@ -48,7 +59,7 @@ export default function Dashboard() {
         JSON.stringify(data, null, 2)
       )
     } catch (err) {
-      setError(err.message)
+      setError(typeof err === 'string' ? err : err?.message || 'Request failed — try again')
     } finally {
       setLoading(false)
     }
@@ -102,7 +113,9 @@ export default function Dashboard() {
           <p className="text-sm text-afr-muted">Balance</p>
           <p className="mt-1 text-lg font-semibold text-afr-gold">
             {balance
-              ? `$${(balance.balance_usd ?? balance.balance ?? 0).toFixed(2)}`
+              ? balance.balance === 'N/A'
+                ? 'Free Tier'
+                : `$${(balance.balance_usd ?? balance.balance ?? 0).toFixed(2)}`
               : '—'}
           </p>
         </div>
@@ -112,6 +125,25 @@ export default function Dashboard() {
           <p className="mt-1 truncate font-mono text-sm text-gray-300">
             {apiKey ? `${apiKey.slice(0, 16)}...` : '—'}
           </p>
+          <button
+            onClick={() => setShowKeyInput(!showKeyInput)}
+            className="mt-2 text-xs text-afr-muted hover:text-afr-gold transition-colors"
+          >
+            Change key
+          </button>
+          {showKeyInput && (
+            <form onSubmit={handleSetKey} className="mt-2 flex gap-2">
+              <input
+                value={manualKey}
+                onChange={e => setManualKey(e.target.value)}
+                placeholder="afr_live_..."
+                className="flex-1 rounded border border-afr-border bg-afr-dark px-2 py-1 text-xs text-white outline-none focus:border-afr-green"
+              />
+              <button type="submit" className="rounded bg-afr-green px-2 py-1 text-xs font-semibold text-white">
+                Set
+              </button>
+            </form>
+          )}
         </div>
       </div>
 
