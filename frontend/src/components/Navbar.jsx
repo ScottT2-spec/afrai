@@ -30,13 +30,28 @@ export default function Navbar() {
               {l.label}
             </Link>
           ))}
-          {!hasKey && (
+          {hasKey ? (
             <Link
-              to="/register"
+              to="/dashboard"
               className="rounded-lg bg-afr-green px-4 py-2 text-sm font-semibold text-white transition-all hover:bg-afr-green/80"
             >
-              Get API Key
+              Dashboard
             </Link>
+          ) : (
+            <div className="flex items-center gap-3">
+              <Link
+                to="/auth?mode=signin"
+                className="text-sm font-medium text-gray-400 transition-colors hover:text-white"
+              >
+                Sign in
+              </Link>
+              <Link
+                to="/auth?mode=signup"
+                className="rounded-lg bg-afr-green px-4 py-2 text-sm font-semibold text-white transition-all hover:bg-afr-green/80"
+              >
+                Get Started
+              </Link>
+            </div>
           )}
         </div>
       </div>

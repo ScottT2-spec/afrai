@@ -25,6 +25,9 @@ import { CachedWalletStore } from './payments/cachedWallet.js';
 import { paymentRoutes } from './gateway/routes/payments.js';
 import { adminRoutes } from './gateway/routes/admin.js';
 import { authRoutes } from './gateway/routes/auth.js';
+import { otpAuthRoutes } from './gateway/routes/otpAuth.js';
+import { googleAuthRoutes } from './gateway/routes/googleAuth.js';
+import { OtpService } from './services/otpService.js';
 import type { MomoConfig } from './payments/momoTypes.js';
 
 /**
@@ -243,6 +246,29 @@ export async function buildServer() {
   await server.register(async (instance) => {
     await authRoutes(instance, { apiKeyService });
   });
+
+  // OTP Auth — email verification flow
+  const otpService = new OtpService();
+  await server.register(async (instance) => {
+    await otpAuthRoutes(instance, { apiKeyService, otpService });
+  });
+
+  // Google OAuth2 — "Continue with Google" (optional)
+  const googleEnabled = !!(config.GOOGLE_CLIENT_ID && config.GOOGLE_CLIENT_SECRET && config.GOOGLE_REDIRECT_URI);
+  if (googleEnabled) {
+    await server.register(async (instance) => {
+      await googleAuthRoutes(instance, {
+        apiKeyService,
+        clientId: config.GOOGLE_CLIENT_ID!,
+        clientSecret: config.GOOGLE_CLIENT_SECRET!,
+        redirectUri: config.GOOGLE_REDIRECT_URI!,
+        frontendUrl: config.FRONTEND_URL,
+      });
+    });
+    server.log.info('Google OAuth: ACTIVE');
+  } else {
+    server.log.info('Google OAuth: disabled (set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI to enable)');
+  }
 
   // Admin — router stats, provider health, system info
   await server.register(async (instance) => {

@@ -52,10 +52,10 @@ export default function Landing() {
           </p>
           <div className="mt-10 flex items-center justify-center gap-4">
             <Link
-              to="/register"
+              to="/auth?mode=signup"
               className="rounded-xl bg-afr-green px-8 py-3 text-lg font-bold text-white shadow-lg shadow-afr-green/20 transition-all hover:scale-105 hover:shadow-afr-green/40"
             >
-              Get Your API Key
+              Get Started Free
             </Link>
             <Link
               to="/pricing"
@@ -107,7 +107,7 @@ export default function Landing() {
         <h2 className="text-3xl font-bold">Ready to build?</h2>
         <p className="mt-4 text-afr-muted">Get your free API key in seconds. No credit card required.</p>
         <Link
-          to="/register"
+          to="/auth?mode=signup"
           className="mt-8 inline-block rounded-xl bg-afr-gold px-8 py-3 text-lg font-bold text-afr-dark transition-all hover:scale-105"
         >
           Start Building →

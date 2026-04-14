@@ -19,6 +19,11 @@ const envSchema = z.object({
   MOMO_ENVIRONMENT: z.enum(['sandbox', 'production']).default('sandbox'),
   MOMO_CURRENCY: z.string().default('GHS'),
   MOMO_CALLBACK_URL: z.string().optional(),
+  // Google OAuth2 (optional — Google sign-in only active when configured)
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_REDIRECT_URI: z.string().optional(),
+  FRONTEND_URL: z.string().default('https://afrai.vercel.app'),
   // Connection pool tuning
   DB_POOL_MAX: z.coerce.number().int().positive().default(20),
   DB_POOL_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),

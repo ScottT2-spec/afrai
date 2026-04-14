@@ -1,7 +1,8 @@
 import { Routes, Route } from 'react-router-dom'
 import Navbar from './components/Navbar'
 import Landing from './pages/Landing'
-import Register from './pages/Register'
+import Auth from './pages/Auth'
+import AuthCallback from './pages/AuthCallback'
 import Dashboard from './pages/Dashboard'
 import Pricing from './pages/Pricing'
 
@@ -12,9 +13,12 @@ export default function App() {
       <main className="flex-1">
         <Routes>
           <Route path="/" element={<Landing />} />
-          <Route path="/register" element={<Register />} />
+          <Route path="/auth" element={<Auth />} />
+          <Route path="/auth/callback" element={<AuthCallback />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/pricing" element={<Pricing />} />
+          {/* Legacy route */}
+          <Route path="/register" element={<Auth />} />
         </Routes>
       </main>
       <footer className="border-t border-afr-border py-6 text-center text-sm text-afr-muted">
