@@ -33,6 +33,22 @@ async function request(path, options = {}) {
   return data
 }
 
+// Auth — OTP flow
+export function sendOtp(email, name) {
+  return request('/v1/auth/send-otp', {
+    method: 'POST',
+    body: JSON.stringify({ email, ...(name ? { name } : {}) }),
+  })
+}
+
+export function verifyOtp(email, code, name) {
+  return request('/v1/auth/verify-otp', {
+    method: 'POST',
+    body: JSON.stringify({ email, code, ...(name ? { name } : {}) }),
+  })
+}
+
+// Legacy register (still works)
 export function register(name, email) {
   return request('/v1/auth/register', {
     method: 'POST',
