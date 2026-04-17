@@ -28,6 +28,7 @@ import { authRoutes } from './gateway/routes/auth.js';
 import { otpAuthRoutes } from './gateway/routes/otpAuth.js';
 import { googleAuthRoutes } from './gateway/routes/googleAuth.js';
 import { OtpService } from './services/otpService.js';
+import { EmailService } from './services/emailService.js';
 import type { MomoConfig } from './payments/momoTypes.js';
 
 /**
@@ -247,10 +248,24 @@ export async function buildServer() {
     await authRoutes(instance, { apiKeyService });
   });
 
+  // Email service — sends OTP codes via Gmail SMTP
+  const emailService = new EmailService({
+    smtpEmail: config.SMTP_EMAIL || '',
+    smtpAppPassword: config.SMTP_APP_PASSWORD || '',
+    fromName: 'AfrAI',
+    isDev: config.NODE_ENV !== 'production',
+  });
+
+  if (emailService.isConfigured) {
+    server.log.info('Email service: ACTIVE' + (config.SMTP_EMAIL ? ` (${config.SMTP_EMAIL})` : ' (dev mode — logs to console)'));
+  } else {
+    server.log.warn('Email service: DISABLED — set SMTP_EMAIL and SMTP_APP_PASSWORD to enable');
+  }
+
   // OTP Auth — email verification flow
   const otpService = new OtpService();
   await server.register(async (instance) => {
-    await otpAuthRoutes(instance, { apiKeyService, otpService });
+    await otpAuthRoutes(instance, { apiKeyService, otpService, emailService });
   });
 
   // Google OAuth2 — "Continue with Google" (optional)

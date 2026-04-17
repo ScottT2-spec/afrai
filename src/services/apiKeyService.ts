@@ -147,6 +147,20 @@ export class ApiKeyService {
   }
 
   /**
+   * Find a tenant by email address.
+   * Returns the tenant record or null.
+   */
+  async findTenantByEmail(email: string): Promise<{ id: string; name: string; email: string; tier: string } | null> {
+    const rows = await this.db
+      .select({ id: tenants.id, name: tenants.name, email: tenants.email, tier: tenants.tier })
+      .from(tenants)
+      .where(eq(tenants.email, email.toLowerCase().trim()))
+      .limit(1);
+
+    return rows[0] || null;
+  }
+
+  /**
    * Deactivate an API key (soft delete).
    */
   async deactivateApiKey(keyId: string): Promise<void> {
