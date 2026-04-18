@@ -165,8 +165,11 @@ export async function googleAuthRoutes(
         } catch (err) {
           const message = err instanceof Error ? err.message : '';
 
-          const code = (err as any)?.code;
-          if (code === '23505' || message.includes('unique') || message.includes('duplicate') || message.includes('already exists')) {
+          const code = (err as any)?.code || (err as any)?.cause?.code;
+          const detail = (err as any)?.detail || (err as any)?.cause?.detail || '';
+          const constraint = (err as any)?.constraint || (err as any)?.cause?.constraint || '';
+          const fullMsg = `${message} ${detail} ${constraint}`.toLowerCase();
+          if (code === '23505' || fullMsg.includes('unique') || fullMsg.includes('duplicate') || fullMsg.includes('already exists') || fullMsg.includes('violates')) {
             // Existing account — look up tenant and issue a fresh API key
             const existingTenant = await apiKeyService.findTenantByEmail(gEmail);
             if (existingTenant) {
