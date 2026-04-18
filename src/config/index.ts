@@ -26,7 +26,7 @@ const envSchema = z.object({
   FRONTEND_URL: z.string().default('https://afrai.vercel.app'),
   // Email (Resend) — for OTP verification emails
   RESEND_API_KEY: z.string().optional(),
-  RESEND_FROM_EMAIL: z.string().default('noreply@afrai.dev'),
+  RESEND_FROM_EMAIL: z.string().default('onboarding@resend.dev'),
   // Connection pool tuning
   DB_POOL_MAX: z.coerce.number().int().positive().default(20),
   DB_POOL_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
