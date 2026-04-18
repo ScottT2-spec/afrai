@@ -166,7 +166,20 @@ export async function googleAuthRoutes(
           const message = err instanceof Error ? err.message : '';
 
           if (message.includes('unique') || message.includes('duplicate') || message.includes('already exists')) {
-            // Existing account — sign in
+            // Existing account — look up tenant and issue a fresh API key
+            const existingTenant = await apiKeyService.findTenantByEmail(gEmail);
+            if (existingTenant) {
+              const rotated = await apiKeyService.rotateApiKey(existingTenant.id);
+              const callbackParams = new URLSearchParams();
+              callbackParams.set('api_key', rotated.rawKey);
+              callbackParams.set('name', existingTenant.name);
+              callbackParams.set('email', gEmail);
+              callbackParams.set('new_account', 'false');
+
+              return reply.redirect(`${frontendUrl}/auth/callback?${callbackParams}`);
+            }
+
+            // Fallback if tenant lookup fails
             const callbackParams = new URLSearchParams();
             callbackParams.set('name', String(accountName));
             callbackParams.set('email', gEmail);
