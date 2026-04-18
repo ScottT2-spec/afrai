@@ -165,7 +165,8 @@ export async function googleAuthRoutes(
         } catch (err) {
           const message = err instanceof Error ? err.message : '';
 
-          if (message.includes('unique') || message.includes('duplicate') || message.includes('already exists')) {
+          const code = (err as any)?.code;
+          if (code === '23505' || message.includes('unique') || message.includes('duplicate') || message.includes('already exists')) {
             // Existing account — look up tenant and issue a fresh API key
             const existingTenant = await apiKeyService.findTenantByEmail(gEmail);
             if (existingTenant) {

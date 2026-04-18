@@ -126,7 +126,8 @@ export async function authRoutes(
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Registration failed';
 
-        if (message.includes('unique') || message.includes('duplicate') || message.includes('already exists')) {
+        const code = (err as any)?.code;
+        if (code === '23505' || message.includes('unique') || message.includes('duplicate') || message.includes('already exists')) {
           return reply.code(409).send({
             error: {
               type: 'conflict',

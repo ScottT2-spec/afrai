@@ -193,7 +193,8 @@ export async function otpAuthRoutes(
       } catch (err) {
         const message = err instanceof Error ? err.message : '';
 
-        if (message.includes('unique') || message.includes('duplicate') || message.includes('already exists')) {
+        const code = (err as any)?.code;
+        if (code === '23505' || message.includes('unique') || message.includes('duplicate') || message.includes('already exists')) {
           // Existing account — issue a new API key
           try {
             const existingTenant = await apiKeyService.findTenantByEmail(email);
