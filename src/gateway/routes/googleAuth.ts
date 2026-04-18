@@ -151,49 +151,30 @@ export async function googleAuthRoutes(
         // Create account or sign in existing
         const accountName = gName.length > 0 ? gName : (gEmail.split('@')[0] ?? gEmail);
 
-        try {
-          const tenant = await apiKeyService.createTenant(accountName, gEmail, 'free');
+        // Check if user already exists
+        const existingTenant = await apiKeyService.findTenantByEmail(gEmail);
 
-          // New account — redirect with API key
+        if (existingTenant) {
+          // Existing account — issue a fresh API key
+          const rotated = await apiKeyService.rotateApiKey(existingTenant.id);
           const callbackParams = new URLSearchParams();
-          callbackParams.set('api_key', String(tenant.rawKey));
-          callbackParams.set('name', String(accountName));
+          callbackParams.set('api_key', rotated.rawKey);
+          callbackParams.set('name', existingTenant.name);
           callbackParams.set('email', gEmail);
-          callbackParams.set('new_account', 'true');
+          callbackParams.set('new_account', 'false');
 
           return reply.redirect(`${frontendUrl}/auth/callback?${callbackParams}`);
-        } catch (err) {
-          const message = err instanceof Error ? err.message : '';
-
-          const code = (err as any)?.code || (err as any)?.cause?.code;
-          const detail = (err as any)?.detail || (err as any)?.cause?.detail || '';
-          const constraint = (err as any)?.constraint || (err as any)?.cause?.constraint || '';
-          const fullMsg = `${message} ${detail} ${constraint}`.toLowerCase();
-          if (code === '23505' || fullMsg.includes('unique') || fullMsg.includes('duplicate') || fullMsg.includes('already exists') || fullMsg.includes('violates')) {
-            // Existing account — look up tenant and issue a fresh API key
-            const existingTenant = await apiKeyService.findTenantByEmail(gEmail);
-            if (existingTenant) {
-              const rotated = await apiKeyService.rotateApiKey(existingTenant.id);
-              const callbackParams = new URLSearchParams();
-              callbackParams.set('api_key', rotated.rawKey);
-              callbackParams.set('name', existingTenant.name);
-              callbackParams.set('email', gEmail);
-              callbackParams.set('new_account', 'false');
-
-              return reply.redirect(`${frontendUrl}/auth/callback?${callbackParams}`);
-            }
-
-            // Fallback if tenant lookup fails
-            const callbackParams = new URLSearchParams();
-            callbackParams.set('name', String(accountName));
-            callbackParams.set('email', gEmail);
-            callbackParams.set('existing', 'true');
-
-            return reply.redirect(`${frontendUrl}/auth/callback?${callbackParams}`);
-          }
-
-          throw err;
         }
+
+        // New account
+        const tenant = await apiKeyService.createTenant(accountName, gEmail, 'free');
+        const callbackParams = new URLSearchParams();
+        callbackParams.set('api_key', String(tenant.rawKey));
+        callbackParams.set('name', String(accountName));
+        callbackParams.set('email', gEmail);
+        callbackParams.set('new_account', 'true');
+
+        return reply.redirect(`${frontendUrl}/auth/callback?${callbackParams}`);
       } catch (err) {
         request.log.error({ err }, 'Google OAuth flow failed');
         return reply.redirect(`${frontendUrl}/auth?error=server_error`);

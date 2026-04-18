@@ -108,6 +108,17 @@ export async function authRoutes(
 
       const { name, email } = parsed.data;
 
+      // Check if account already exists BEFORE insert
+      const existing = await apiKeyService.findTenantByEmail(email);
+      if (existing) {
+        return reply.code(409).send({
+          error: {
+            type: 'conflict',
+            message: 'An account with this email already exists.',
+          },
+        });
+      }
+
       try {
         const result = await apiKeyService.createTenant(name, email, 'free');
 
@@ -124,22 +135,7 @@ export async function authRoutes(
             'Authorization header: Bearer ' + result.rawKey,
         });
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Registration failed';
-
-        const code = (err as any)?.code || (err as any)?.cause?.code;
-        const detail = (err as any)?.detail || (err as any)?.cause?.detail || '';
-        const constraint = (err as any)?.constraint || (err as any)?.cause?.constraint || '';
-        const fullMsg = `${message} ${detail} ${constraint}`.toLowerCase();
-        if (code === '23505' || fullMsg.includes('unique') || fullMsg.includes('duplicate') || fullMsg.includes('already exists') || fullMsg.includes('violates')) {
-          return reply.code(409).send({
-            error: {
-              type: 'conflict',
-              message: 'An account with this email already exists.',
-            },
-          });
-        }
-
-        request.log.error({ err, errCode: (err as any)?.code, causeCode: (err as any)?.cause?.code, errDetail: (err as any)?.detail, causeDetail: (err as any)?.cause?.detail, errMsg: message }, 'Registration failed');
+        request.log.error({ err }, 'Registration failed');
         return reply.code(500).send({
           error: {
             type: 'internal_error',

@@ -175,6 +175,22 @@ export async function otpAuthRoutes(
       // OTP valid — create account or return existing
       const accountName = (name || result.name || email.split('@')[0]) as string;
 
+      // Check if account already exists
+      const existingTenant = await apiKeyService.findTenantByEmail(email);
+      if (existingTenant) {
+        // Existing account — issue a fresh API key
+        const rotated = await apiKeyService.rotateApiKey(existingTenant.id);
+        return reply.code(200).send({
+          tenant_id: existingTenant.id,
+          api_key: rotated.rawKey,
+          key_prefix: rotated.keyPrefix,
+          tier: 'free',
+          rate_limit_rpm: 60,
+          message: '✅ Signed in! Here\'s a new API key. Your old keys still work.',
+          new_account: false,
+        });
+      }
+
       try {
         const tenant = await apiKeyService.createTenant(accountName, email, 'free');
 
@@ -191,40 +207,6 @@ export async function otpAuthRoutes(
           new_account: true,
         });
       } catch (err) {
-        const message = err instanceof Error ? err.message : '';
-
-        const code = (err as any)?.code || (err as any)?.cause?.code;
-        const detail = (err as any)?.detail || (err as any)?.cause?.detail || '';
-        const constraint = (err as any)?.constraint || (err as any)?.cause?.constraint || '';
-        const fullMsg = `${message} ${detail} ${constraint}`.toLowerCase();
-        if (code === '23505' || fullMsg.includes('unique') || fullMsg.includes('duplicate') || fullMsg.includes('already exists') || fullMsg.includes('violates')) {
-          // Existing account — issue a new API key
-          try {
-            const existingTenant = await apiKeyService.findTenantByEmail(email);
-            if (existingTenant) {
-              const rotated = await apiKeyService.rotateApiKey(existingTenant.id);
-              return reply.code(200).send({
-                tenant_id: existingTenant.id,
-                api_key: rotated.rawKey,
-                key_prefix: rotated.keyPrefix,
-                tier: 'free',
-                rate_limit_rpm: 60,
-                message: '✅ Signed in! Here\'s a new API key. Your old keys still work.',
-                new_account: false,
-              });
-            }
-          } catch {
-            // Fall through to generic response
-          }
-
-          return reply.code(200).send({
-            message: 'Email verified. Use your existing API key, or contact support for a new one.',
-            email,
-            tier: 'free',
-            new_account: false,
-          });
-        }
-
         request.log.error({ err }, 'Account creation failed after OTP verification');
         return reply.code(500).send({
           error: { type: 'internal_error', message: 'Account creation failed. Please try again.' },
