@@ -24,9 +24,9 @@ const envSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_REDIRECT_URI: z.string().optional(),
   FRONTEND_URL: z.string().default('https://afrai.vercel.app'),
-  // SMTP Email (Gmail) — for OTP verification emails
-  SMTP_EMAIL: z.string().optional(),
-  SMTP_APP_PASSWORD: z.string().optional(),
+  // Email (Resend) — for OTP verification emails
+  RESEND_API_KEY: z.string().optional(),
+  RESEND_FROM_EMAIL: z.string().default('noreply@afrai.dev'),
   // Connection pool tuning
   DB_POOL_MAX: z.coerce.number().int().positive().default(20),
   DB_POOL_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),

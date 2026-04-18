@@ -1,45 +1,30 @@
 /**
- * Email Service — sends verification codes and transactional emails via SMTP.
+ * Email Service — sends verification codes and transactional emails.
  *
- * Uses Gmail SMTP (same approach as ScholarFinder).
- * Requires: SMTP_EMAIL, SMTP_APP_PASSWORD env vars.
+ * Uses Resend (HTTP API) — works on HF Spaces, Render, Railway, etc.
+ * Falls back to console logging in dev mode if not configured.
  *
- * Falls back to console logging in dev mode if SMTP is not configured.
+ * Requires: RESEND_API_KEY env var.
  */
 
-import { createTransport, type Transporter } from 'nodemailer';
-
 export interface EmailServiceConfig {
-  smtpEmail: string;
-  smtpAppPassword: string;
+  resendApiKey?: string;
+  fromEmail?: string;
   fromName?: string;
   isDev?: boolean;
 }
 
 export class EmailService {
-  private transporter: Transporter | null = null;
+  private readonly apiKey: string | null;
   private readonly fromEmail: string;
   private readonly fromName: string;
   private readonly isDev: boolean;
 
   constructor(config: EmailServiceConfig) {
-    this.fromEmail = config.smtpEmail;
+    this.apiKey = config.resendApiKey || null;
+    this.fromEmail = config.fromEmail || 'noreply@afrai.dev';
     this.fromName = config.fromName || 'AfrAI';
     this.isDev = config.isDev || false;
-
-    if (config.smtpEmail && config.smtpAppPassword) {
-      this.transporter = createTransport({
-        host: 'smtp.gmail.com',
-        port: 587,
-        secure: false,
-        auth: {
-          user: config.smtpEmail,
-          pass: config.smtpAppPassword,
-        },
-        connectionTimeout: 15000,
-        greetingTimeout: 15000,
-      });
-    }
   }
 
   /**
@@ -104,27 +89,41 @@ export class EmailService {
   }
 
   /**
-   * Low-level send. Logs to console in dev mode if SMTP is not configured.
+   * Send email via Resend HTTP API. Falls back to console in dev mode.
    */
   private async send(to: string, subject: string, html: string, text: string): Promise<boolean> {
-    if (!this.transporter) {
+    if (!this.apiKey) {
       if (this.isDev) {
         console.log(`📧 [DEV EMAIL] To: ${to} | Subject: ${subject}`);
         console.log(`📧 [DEV EMAIL] Text: ${text}`);
         return true;
       }
-      console.error('Email service not configured — set SMTP_EMAIL and SMTP_APP_PASSWORD');
+      console.error('Email service not configured — set RESEND_API_KEY');
       return false;
     }
 
     try {
-      await this.transporter.sendMail({
-        from: `${this.fromName} <${this.fromEmail}>`,
-        to,
-        subject,
-        html,
-        text,
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: `${this.fromName} <${this.fromEmail}>`,
+          to: [to],
+          subject,
+          html,
+          text,
+        }),
       });
+
+      if (!res.ok) {
+        const err = await res.text();
+        console.error(`Resend API error (${res.status}):`, err);
+        return false;
+      }
+
       return true;
     } catch (err) {
       console.error('Email send failed:', err);
@@ -134,6 +133,6 @@ export class EmailService {
 
   /** Check if email sending is available */
   get isConfigured(): boolean {
-    return this.transporter !== null || this.isDev;
+    return this.apiKey !== null || this.isDev;
   }
 }

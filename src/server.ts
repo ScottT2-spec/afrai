@@ -248,18 +248,18 @@ export async function buildServer() {
     await authRoutes(instance, { apiKeyService });
   });
 
-  // Email service — sends OTP codes via Gmail SMTP
+  // Email service — sends OTP codes via Resend HTTP API
   const emailService = new EmailService({
-    smtpEmail: config.SMTP_EMAIL || '',
-    smtpAppPassword: config.SMTP_APP_PASSWORD || '',
+    resendApiKey: config.RESEND_API_KEY,
+    fromEmail: config.RESEND_FROM_EMAIL,
     fromName: 'AfrAI',
     isDev: config.NODE_ENV !== 'production',
   });
 
   if (emailService.isConfigured) {
-    server.log.info('Email service: ACTIVE' + (config.SMTP_EMAIL ? ` (${config.SMTP_EMAIL})` : ' (dev mode — logs to console)'));
+    server.log.info('Email service: ACTIVE' + (config.RESEND_API_KEY ? ' (Resend)' : ' (dev mode — logs to console)'));
   } else {
-    server.log.warn('Email service: DISABLED — set SMTP_EMAIL and SMTP_APP_PASSWORD to enable');
+    server.log.warn('Email service: DISABLED — set RESEND_API_KEY to enable');
   }
 
   // OTP Auth — email verification flow
