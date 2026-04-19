@@ -21,8 +21,7 @@ export function createAuthMiddleware(
 
     if (!apiKey) {
       reply.code(401).send({
-        error: 'Unauthorized',
-        message: 'Missing API key. Provide via X-API-Key header or Authorization: Bearer <key>',
+        error: { type: 'authentication_error', message: 'Missing API key. Provide via X-API-Key header or Authorization: Bearer <key>' },
       });
       return;
     }
@@ -30,8 +29,7 @@ export function createAuthMiddleware(
     // Validate format
     if (!apiKey.startsWith('afr_live_')) {
       reply.code(401).send({
-        error: 'Unauthorized',
-        message: 'Invalid API key format',
+        error: { type: 'authentication_error', message: 'Invalid API key format' },
       });
       return;
     }
@@ -42,8 +40,7 @@ export function createAuthMiddleware(
     if (!context) {
       request.log.warn({ keyPrefix: apiKey.slice(0, 12) }, 'Failed auth attempt');
       reply.code(401).send({
-        error: 'Unauthorized',
-        message: 'Invalid or inactive API key',
+        error: { type: 'authentication_error', message: 'Invalid or inactive API key' },
       });
       return;
     }
@@ -51,8 +48,7 @@ export function createAuthMiddleware(
     // Check scope
     if (requiredScope && !context.scopes.includes(requiredScope)) {
       reply.code(403).send({
-        error: 'Forbidden',
-        message: `API key does not have the required scope: ${requiredScope}`,
+        error: { type: 'forbidden', message: `API key does not have the required scope: ${requiredScope}` },
       });
       return;
     }
